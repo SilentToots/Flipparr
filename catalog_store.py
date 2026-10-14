@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 77
+SCHEMA_VERSION = 78
 
 # What is kept with a file's signature, so that a changed file is looked at
 # again -- and carried over when the change is only a CBZ conversion of the
@@ -1628,7 +1628,12 @@ class CatalogStore:
                     removed_to TEXT NOT NULL,
                     reason TEXT NOT NULL,
                     resolved_by TEXT NOT NULL,
-                    resolved_at TEXT NOT NULL
+                    resolved_at TEXT NOT NULL,
+                    -- schema 78: the row is written before the file moves
+                    -- ("pending") and marked "done" once it has, so a
+                    -- crash between the two leaves a record to finish or
+                    -- drop, never a moved file no table knows of.
+                    state TEXT NOT NULL DEFAULT 'done' CHECK(state IN ('pending', 'done'))
                 );
                 -- Each night's overnight panel read (schema 77, the owner,
                 -- 2026-10-14): when it ran, what it read, how many pages went
@@ -2383,6 +2388,15 @@ class CatalogStore:
             replacement_columns = {row["name"] for row in connection.execute("PRAGMA table_info(file_replacement_requests)")}
             if "automatic" not in replacement_columns:
                 connection.execute("ALTER TABLE file_replacement_requests ADD COLUMN automatic INTEGER NOT NULL DEFAULT 0")
+            # 78: a set-aside is recorded before its file moves, so the record
+            # says whether the move is pending or done. Rows from before were
+            # all written after the move: done.
+            resolution_columns = {row["name"] for row in connection.execute("PRAGMA table_info(duplicate_resolutions)")}
+            if "state" not in resolution_columns:
+                connection.execute(
+                    "ALTER TABLE duplicate_resolutions ADD COLUMN state TEXT NOT NULL DEFAULT 'done' "
+                    "CHECK(state IN ('pending', 'done'))"
+                )
             # 50: a profile's picture -- a photo, or a cover from the library.
             # The image is a file the app writes; the row says where it came
             # from and when, which is what makes its URL change with it.
@@ -5768,22 +5782,68 @@ class CatalogStore:
                 "downloaded": bool(row["downloaded"]), "manualPanels": int(row["manual_panels"] or 0)})
         return list(groups.values())
 
-    def set_aside_duplicate(self, issue_id: int, kept_file_id: int, removed_file_id: int, old_path: str,
-                            new_path: str, *, reason: str, by: str) -> None:
-        """A copy of an issue moved aside: its record stays, not present, at
-        the path it was moved to, and the move is kept as evidence."""
+    def begin_set_aside(self, issue_id: int, kept_file_id: int, removed_file_id: int, old_path: str,
+                        new_path: str, *, reason: str, by: str) -> int:
+        """The record of a copy about to be moved aside, written before the
+        file moves (schema 78). A crash between the two leaves this row,
+        pending, for finish_pending_set_asides to complete or drop -- never
+        a file in .flipparr/duplicates that no table knows of. Returns the
+        row's id for finish_set_aside."""
         with self._write_lock, self._connect() as connection:
-            updated = connection.execute(
-                "UPDATE files SET path=?, present=0, updated_at=? WHERE id=? AND path=? AND present=1",
-                (new_path, _utc_now(), int(removed_file_id), old_path),
-            ).rowcount
-            if not updated:
+            present = connection.execute(
+                "SELECT 1 FROM files WHERE id=? AND path=? AND present=1", (int(removed_file_id), old_path),
+            ).fetchone()
+            if present is None:
                 raise LookupError("That copy is no longer where it was")
-            connection.execute(
+            cursor = connection.execute(
                 """INSERT INTO duplicate_resolutions(issue_id, kept_file_id, removed_file_id, removed_from, removed_to,
-                                                     reason, resolved_by, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                                     reason, resolved_by, resolved_at, state)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
                 (int(issue_id), int(kept_file_id), int(removed_file_id), old_path, new_path, reason, by, _utc_now()),
             )
+            return int(cursor.lastrowid)
+
+    def finish_set_aside(self, resolution_id: int) -> None:
+        """The copy has moved: its record stays, not present, at the path it
+        was moved to, and the resolution is done."""
+        with self._write_lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT removed_file_id, removed_from, removed_to FROM duplicate_resolutions WHERE id=? AND state='pending'",
+                (int(resolution_id),),
+            ).fetchone()
+            if row is None:
+                raise LookupError("That set-aside is not pending")
+            connection.execute(
+                "UPDATE files SET path=?, present=0, updated_at=? WHERE id=? AND path=?",
+                (row["removed_to"], _utc_now(), int(row["removed_file_id"]), row["removed_from"]),
+            )
+            connection.execute(
+                "UPDATE duplicate_resolutions SET state='done', resolved_at=? WHERE id=?", (_utc_now(), int(resolution_id)),
+            )
+
+    def drop_set_aside(self, resolution_id: int) -> None:
+        """The move did not happen: the pending record goes."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute("DELETE FROM duplicate_resolutions WHERE id=? AND state='pending'", (int(resolution_id),))
+
+    def pending_set_asides(self) -> list[dict[str, Any]]:
+        """Set-asides recorded but never finished: a crash between the record
+        and the move, or between the move and its finish."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT id, issue_id, kept_file_id, removed_file_id, removed_from, removed_to
+                     FROM duplicate_resolutions WHERE state='pending' ORDER BY id""",
+            ).fetchall()
+        return [{"id": int(row["id"]), "issueId": int(row["issue_id"]), "keptFileId": int(row["kept_file_id"]),
+                 "removedFileId": int(row["removed_file_id"]), "from": row["removed_from"], "to": row["removed_to"]}
+                for row in rows]
+
+    def set_aside_duplicate(self, issue_id: int, kept_file_id: int, removed_file_id: int, old_path: str,
+                            new_path: str, *, reason: str, by: str) -> None:
+        """A copy already moved aside, recorded in one step -- for a move
+        made elsewhere; keep_one_copy records first (begin_set_aside)."""
+        self.finish_set_aside(self.begin_set_aside(issue_id, kept_file_id, removed_file_id, old_path, new_path,
+                                                   reason=reason, by=by))
 
     def present_copy_of(self, file_id: int) -> int | None:
         """For a copy no longer in the library, another copy of the same

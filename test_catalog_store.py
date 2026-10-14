@@ -4676,6 +4676,37 @@ class ReaderProfileTests(LibraryFixture):
             self.assertEqual(len(names), CatalogStore.PRE_UPGRADE_COPIES_KEPT, "the oldest beyond the last few are gone")
             self.assertNotIn(f"{path.name}.pre-v61", names)
 
+    def test_a_set_aside_recorded_before_78_is_done(self):
+        """Schema 78 writes a set-aside's record before its file moves and
+        marks it done after. Every row from before was written after the
+        move, so an upgraded library has them all done and nothing pending."""
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            path = store.database_path
+            with sqlite3.connect(path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE duplicate_resolutions_77 (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, issue_id INTEGER NOT NULL, kept_file_id INTEGER NOT NULL,
+                        removed_file_id INTEGER NOT NULL, removed_from TEXT NOT NULL, removed_to TEXT NOT NULL,
+                        reason TEXT NOT NULL, resolved_by TEXT NOT NULL, resolved_at TEXT NOT NULL
+                    );
+                    INSERT INTO duplicate_resolutions_77(issue_id, kept_file_id, removed_file_id, removed_from, removed_to,
+                                                         reason, resolved_by, resolved_at)
+                    VALUES (1, 1, 2, '/comics/a.cbz', '/comics/.flipparr/duplicates/1/a.cbz', 'one copy per issue',
+                            'admin', '2026-10-13T00:00:00+00:00');
+                    DROP TABLE duplicate_resolutions;
+                    ALTER TABLE duplicate_resolutions_77 RENAME TO duplicate_resolutions;
+                    UPDATE schema_info SET version=77;
+                    """
+                )
+            reopened = CatalogStore(path)
+            self.assertEqual(reopened.pending_set_asides(), [])
+            with sqlite3.connect(path) as connection:
+                self.assertEqual(connection.execute("SELECT state FROM duplicate_resolutions").fetchall(), [("done",)])
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute("UPDATE duplicate_resolutions SET state='maybe'")
+
     def test_a_library_from_a_newer_build_is_refused_before_it_is_touched(self):
         """Gate 4 (2026-10-05): the old check came after the tables were
         created and rows cleaned up, so an older image put back what a newer

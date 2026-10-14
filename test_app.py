@@ -10806,6 +10806,45 @@ class ImportRestartSafetyTests(unittest.TestCase):
             self.assertEqual([path.read_bytes() for path in kept], [b"new-but-bad"])
             store.restore_replacement_original.assert_called_once_with(9, str(quarantine), str(original), str(kept[0]))
 
+    def test_a_converted_replacement_that_fails_goes_back_under_its_own_name(self):
+        # c226c37 files a converted replacement at X.cbz beside an X.cbr
+        # original. The rollback restores X.cbr; it never puts the RAR back
+        # under the .cbz name.
+        with tempfile.TemporaryDirectory() as folder:
+            library = Path(folder) / "library"
+            original = library / "Image Comics" / "Saga (2012)" / "Saga (2012) #001.cbr"
+            destination = original.with_suffix(".cbz")
+            original.parent.mkdir(parents=True)
+            destination.write_bytes(b"new-but-bad")
+            quarantine = library / ".flipparr" / "quarantine" / "9" / "Image Comics" / "Saga (2012)" / original.name
+            quarantine.parent.mkdir(parents=True)
+            quarantine.write_bytes(b"the-rar")
+            store = Mock()
+            app._rollback_replacement_swap(store, 9, original, quarantine, destination)
+            self.assertEqual(original.read_bytes(), b"the-rar")
+            self.assertFalse(destination.exists(), "no RAR left under the .cbz name")
+            kept = [path for path in quarantine.parent.iterdir() if ".failed-new-" in path.name]
+            self.assertEqual([path.suffix for path in kept], [".cbz"])
+            store.restore_replacement_original.assert_called_once_with(9, str(quarantine), str(original), str(kept[0]))
+
+    def test_a_completed_download_rolls_a_converted_replacement_back_to_the_cbr(self):
+        # The second rollback site (a failure after the import, in
+        # _import_completed_download) took the destination for the original
+        # and so would have restored X.cbr's bytes at X.cbz.
+        store = Mock()
+        store.get_acquisition_job_context.return_value = {}
+        imported = {"source": "/downloads/x/Saga 001.cbr", "destination": "/comics/Saga (2012)/Saga (2012) #001.cbz",
+                    "size": 1, "sha256": "y", "replacementId": "9",
+                    "quarantineOriginal": "/comics/.flipparr/quarantine/9/Saga (2012)/Saga (2012) #001.cbr",
+                    "replacementOriginal": "/comics/Saga (2012)/Saga (2012) #001.cbr"}
+        with patch("app.import_downloaded_comic", return_value=imported), \
+             patch("app._catalog_imported_issue", side_effect=ValueError("the row could not be written")), \
+             patch("app._rollback_replacement_swap") as rollback:
+            result = app._import_completed_download(store, {"id": 1, "job_id": 121, "source": "sabnzbd"}, "/downloads/x")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(rollback.call_args.args[2], Path("/comics/Saga (2012)/Saga (2012) #001.cbr"))
+        self.assertEqual(rollback.call_args.args[4], Path("/comics/Saga (2012)/Saga (2012) #001.cbz"))
+
     def test_a_replacement_retried_after_its_swap_finished_is_already_done(self):
         # Killed after the rename, before the row said imported: the catalog
         # already points the original at its quarantine copy, so the retry
@@ -11492,7 +11531,9 @@ class _ComicCopiesTestCase(unittest.TestCase):
         return buffer.getvalue()
 
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        # Resolved: macOS's temp folder is a symlink (/var -> /private/var),
+        # and a file's path must sit under the library root the store resolves.
+        self.root = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, self.root, True)
         self.store = CatalogStore(self.root / "catalog.db")
         for each in (patch("app.catalog_store", return_value=self.store),
@@ -11717,6 +11758,41 @@ class OneCopyPerIssueTests(_ComicCopiesTestCase):
         place = app.file_reading_progress(big, user_id=ADMIN_USER_ID)
         self.assertEqual(place["page"], 1, "read on the copy that stayed")
 
+    def test_a_move_that_fails_leaves_no_record_and_the_copy_where_it_was(self):
+        # The record is written before the move (schema 78). A move that
+        # fails takes its pending record with it; nothing says the copy left.
+        big, little, issue_id = self._pair()
+        with patch("app.os.replace", side_effect=OSError("read-only")), self.assertRaises(OSError):
+            app.keep_one_copy(issue_id, big)
+        self.assertTrue((self.root / "Example 001 (small).cbz").is_file())
+        with sqlite3.connect(self.store.database_path) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM duplicate_resolutions").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT present FROM files WHERE id=?", (little,)).fetchone()[0], 1)
+
+    def test_a_set_aside_cut_off_after_the_move_is_finished_at_the_next_start(self):
+        # Killed between the move and its finish: the file is in duplicates/,
+        # the row still says present at the old path, and a pending record
+        # tells the next start which it is. Before, there was a log line.
+        big, little, issue_id = self._pair()
+        source = self.root / "Example 001 (small).cbz"
+        target = self.root / ".flipparr" / "duplicates" / str(issue_id) / source.name
+        resolution = self.store.begin_set_aside(issue_id, big, little, str(source), str(target),
+                                                reason="one copy per issue", by="admin")
+        target.parent.mkdir(parents=True)
+        source.rename(target)
+        self.assertEqual(app.finish_pending_set_asides(), {"finished": 1, "dropped": 0, "unsettled": 0})
+        with sqlite3.connect(self.store.database_path) as connection:
+            present, path = connection.execute("SELECT present, path FROM files WHERE id=?", (little,)).fetchone()
+            state = connection.execute("SELECT state FROM duplicate_resolutions WHERE id=?", (resolution,)).fetchone()[0]
+        self.assertEqual((present, path, state), (0, str(target), "done"))
+        self.assertEqual(app.duplicate_copies(), [], "the issue has one copy again")
+        # Cut off before the move instead: the record goes and the copy stands.
+        other = self.store.begin_set_aside(issue_id, big, big, str(self.root / "Example 001 (big).cbz"),
+                                           str(target.with_name("x.cbz")), reason="test", by="admin")
+        self.assertEqual(app.finish_pending_set_asides(), {"finished": 0, "dropped": 1, "unsettled": 0})
+        with sqlite3.connect(self.store.database_path) as connection:
+            self.assertIsNone(connection.execute("SELECT 1 FROM duplicate_resolutions WHERE id=?", (other,)).fetchone())
+
     def test_a_device_holding_the_set_aside_copy_keeps_it_and_its_saves_land(self):
         big, little, issue_id = self._pair()
         held = app._file_signature(self.root / "Example 001 (small).cbz")
@@ -11772,6 +11848,39 @@ class OvernightWindowTests(unittest.TestCase):
         self.assertEqual(app.overnight_night(dt.datetime(2026, 10, 15, 3, 0), 0), "2026-10-15")
         self.assertEqual(app.overnight_night(dt.datetime(2026, 10, 15, 3, 0), 22), "2026-10-14")
         self.assertEqual(app.overnight_night(dt.datetime(2026, 10, 15, 23, 0), 22), "2026-10-15")
+
+    def _worker_tick(self, last_run):
+        """One pass of the worker's loop with tonight's last run as given:
+        whether it starts the read again."""
+        stop = Mock()
+        stop.wait.side_effect = [False, True]
+        store = Mock()
+        store.overnight_runs.return_value = [last_run] if last_run else []
+        settings = {"overnightPanels": True, "overnightPanelsStart": 0, "overnightPanelsEnd": 6}
+        with patch("app.load_app_settings", return_value=settings), patch("app.catalog_store", return_value=store), \
+             patch("app.overnight_window_end", return_value=dt.datetime(2026, 10, 15, 6, 0)), \
+             patch("app.overnight_night", return_value="2026-10-15"), \
+             patch("app.overnight_panel_pass") as read:
+            app.overnight_panels_worker(stop)
+        return read.called
+
+    def test_a_night_that_stopped_waits_before_it_is_read_again(self):
+        # Before, only "done" and "cap" waited: a night stopped by an error
+        # or a resting connector ran the whole plan again every minute until
+        # the window closed, a row and a walk over every page each time.
+        ago = lambda seconds: (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=seconds)).isoformat()
+        run = lambda stopped, seconds: {"night": "2026-10-15", "stopped": stopped, "endedAt": ago(seconds)}
+        self.assertFalse(self._worker_tick(run("error", 120)), "an error two minutes ago: wait")
+        self.assertTrue(self._worker_tick(run("error", 3700)), "an hour on, try the night again")
+        self.assertFalse(self._worker_tick(run("vision_unavailable", 600)))
+        self.assertTrue(self._worker_tick(run("vision_unavailable", 1000)), "a quarter hour for the connector")
+        self.assertFalse(self._worker_tick(run("done", 1800)))
+        self.assertFalse(self._worker_tick(run("cap", 1800)))
+        self.assertTrue(self._worker_tick(run("stopped", 10)), "a stop by the worker holds nothing back")
+        self.assertTrue(self._worker_tick(run("interrupted", 10)))
+        self.assertTrue(self._worker_tick({"night": "2026-10-14", "stopped": "error", "endedAt": ago(60)}),
+                        "last night's trouble is not tonight's")
+        self.assertTrue(self._worker_tick(None), "a first night reads")
 
     def test_settings_take_only_the_hours_and_limits_offered(self):
         with tempfile.TemporaryDirectory() as folder, patch("app.settings_config_path", return_value=Path(folder) / "s.json"):
@@ -12023,6 +12132,54 @@ class LibraryCbzConversionTests(_ComicCopiesTestCase):
         patcher = patch("app.CBZ_CONVERTIBLE_KINDS", frozenset({"tar"}))
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_a_conversion_cut_off_after_its_cbz_landed_is_finished_next_time(self):
+        # Killed between the CBZ's rename into place and the record's
+        # repoint: both files sit in the library and the row still says
+        # .cbr. Before, every later run answered "already there" and the
+        # next scan cataloged the CBZ as a second comic.
+        cbz = self.root / "Example 001.cbz"
+        with zipfile.ZipFile(cbz, "w") as archive:
+            for index, data in enumerate(self.pages):
+                archive.writestr(f"{index + 1:02d}.jpg", data)
+        self.assertEqual(app.convert_library_file_to_cbz(self.file_id, self.comic, self.root), "converted")
+        self.assertFalse(self.comic.exists())
+        self.assertTrue((self.root / ".flipparr" / "converted" / "Example 001.cbr").is_file())
+        self.assertEqual(self.store.library_file_path(self.file_id), cbz)
+        [row] = self.store.cbz_conversions()
+        self.assertEqual((row["outcome"], row["reason"]), ("converted", "finished: its CBZ was already there"))
+
+    def test_a_cbz_already_there_that_does_not_read_is_left_alone(self):
+        cbz = self.root / "Example 001.cbz"
+        cbz.write_bytes(b"not a zip at all")
+        self.assertEqual(app.convert_library_file_to_cbz(self.file_id, self.comic, self.root), "kept")
+        self.assertTrue(self.comic.is_file(), "the RAR stands")
+        self.assertEqual(self.store.library_file_path(self.file_id), self.comic)
+        [row] = self.store.cbz_conversions()
+        self.assertIn("does not read whole", row["reason"])
+
+    def test_the_copy_in_flight_is_named_so_a_scan_skips_it(self):
+        # A kill mid-copy skips the cleanup; the half-written zip must never
+        # be a comic to the next scan.
+        seen = []
+        real = shutil.copyfile
+        def spy(src, dst, *args, **kwargs):
+            seen.append(Path(dst).name)
+            return real(src, dst, *args, **kwargs)
+        with patch("app.shutil.copyfile", side_effect=spy):
+            app.convert_library_file_to_cbz(self.file_id, self.comic, self.root)
+        [partial] = [name for name in seen if ".partial" in name]
+        self.assertTrue(app._is_import_partial(partial), partial)
+
+    def test_scans_wait_while_the_library_is_converted(self):
+        with patch.dict(app._CBZ_JOB, {"running": True}):
+            with self.assertRaises(ValueError):
+                app.start_catalog_scan(str(self.root), True, "local")
+            stop = Mock()
+            stop.wait.side_effect = [False, True]
+            with patch("app.start_catalog_scan") as started, patch("app.auto_replace_damaged"):
+                app.auto_scan_worker(stop)
+            started.assert_not_called()
 
     def test_the_comic_keeps_its_record_its_reading_and_its_panels(self):
         app.render_file_page(self.file_id, 1, "read")

@@ -7283,6 +7283,14 @@ def stop_cbz_conversion() -> dict[str, Any]:
     return cbz_conversion_status()
 
 
+def cbz_conversion_running() -> bool:
+    """Whether the library conversion is under way: a scan then waits. A
+    scan that listed a folder before a comic's repoint marks the converted
+    row gone and catalogs its CBZ as a new comic."""
+    with _CBZ_JOB_LOCK:
+        return bool(_CBZ_JOB["running"])
+
+
 def _utc_now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
@@ -7375,7 +7383,28 @@ def _convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_o
         return "kept"
     target = path.with_suffix(".cbz")
     if target.exists():
-        return kept("A CBZ of it is already there")
+        # A CBZ at the name while this row is still at the .cbr: a conversion
+        # cut off after its CBZ landed and before the record followed, or a
+        # file put there by hand. One that reads whole and whose name no other
+        # comic holds finishes the interrupted conversion; the two copies
+        # would otherwise stay side by side, the next scan catalog the
+        # second, and every later run say "already there".
+        health = inspect_file_health(target)
+        if health.get("status") == "error":
+            return kept("A CBZ of it is already there, but it does not read whole")
+        stat = target.stat()
+        new_signature = _file_signature(target)
+        try:
+            store.repoint_converted_file(file_id, str(path), str(target), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
+                                         file_cover=file_cover_info(target), old_signature=old_signature,
+                                         new_signature=new_signature)
+        except ValueError as exc:
+            return kept(str(exc))
+        _put_converted_original_aside(path, root, keep_original)
+        store.record_cbz_conversion(path.name, kind, size, stat.st_size, None, "converted",
+                                    "finished: its CBZ was already there", file_id=file_id,
+                                    from_signature=old_signature, to_signature=new_signature)
+        return "converted"
     if kind == "zip":
         # Already a zip under a .cbr name: the name is all that changes.
         os.replace(path, target)
@@ -7398,7 +7427,9 @@ def _convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_o
     work = unpack_work_dir()
     work.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="flipparr-cbz-", dir=work))
-    partial = target.with_name(f".{target.stem}.flipparr-convert.partial.cbz")
+    # Named as an import's copy in flight is (IMPORT_PARTIAL), so a scan
+    # never catalogs a half-written one a kill left behind.
+    partial = target.with_name(f".{target.stem}.flipparr-{os.getpid()}-{threading.get_ident()}.partial.cbz")
     try:
         with cpu_lane("background"):
             members = convert_archive_to_cbz(path, folder / "comic.cbz")
@@ -7418,18 +7449,24 @@ def _convert_library_file_to_cbz(file_id: int, path: Path, root: Path, *, keep_o
         except Exception:
             target.unlink(missing_ok=True)
             raise
-        if keep_original:
-            aside = root / MANAGED_LIBRARY_DIR / "converted" / path.relative_to(root)
-            aside.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(path, aside)
-        else:
-            path.unlink()
+        _put_converted_original_aside(path, root, keep_original)
         store.record_cbz_conversion(path.name, kind, size, stat.st_size, members, "converted",
                                     file_id=file_id, from_signature=old_signature, to_signature=new_signature)
         return "converted"
     finally:
         shutil.rmtree(folder, ignore_errors=True)
         partial.unlink(missing_ok=True)
+
+
+def _put_converted_original_aside(path: Path, root: Path, keep_original: bool) -> None:
+    """The converted comic's original: to .flipparr/converted in its library
+    folder (scans skip it), or gone when the admin chose not to keep them."""
+    if keep_original:
+        aside = root / MANAGED_LIBRARY_DIR / "converted" / path.relative_to(root)
+        aside.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(path, aside)
+    else:
+        path.unlink()
 
 
 # ---- Checking every comic's pages, and replacing damaged comics -------------
@@ -7703,16 +7740,49 @@ def keep_one_copy(issue_id: int, keep_file_id: int, *, by: str = "admin", reason
         if target.exists():
             target = target.with_name(f"{target.stem}.{copy['id']}{target.suffix}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(source, target)
+        # Recorded before it moves: a crash between the two leaves a pending
+        # row that finish_pending_set_asides completes or drops at the next
+        # start, never a file in duplicates/ that nothing knows of.
+        resolution_id = store.begin_set_aside(issue_id, keep_file_id, copy["id"], str(source), str(target),
+                                              reason=reason or "one copy per issue", by=by)
         try:
-            store.set_aside_duplicate(issue_id, keep_file_id, copy["id"], str(source), str(target),
-                                      reason=reason or "one copy per issue", by=by)
+            os.replace(source, target)
+        except OSError:
+            store.drop_set_aside(resolution_id)
+            raise
+        try:
+            store.finish_set_aside(resolution_id)
         except Exception:
             os.replace(target, source)
+            store.drop_set_aside(resolution_id)
             raise
         moved.append({"fileId": str(copy["id"]), "to": str(target)})
     log_event("duplicate_copies_set_aside", issueId=issue_id, kept=keep_file_id, moved=len(moved), by=by)
     return {"issueId": str(issue_id), "keptFileId": str(keep_file_id), "setAside": moved}
+
+
+def finish_pending_set_asides() -> dict[str, int]:
+    """Set-asides a crash left half done, settled from what is on disk: the
+    file at its new path and gone from the old -> the record is finished;
+    still at the old path -> the record is dropped and the copy stands;
+    anything else is left for a look and said in the log."""
+    store = catalog_store()
+    finished = dropped = unsure = 0
+    for pending in store.pending_set_asides():
+        source, target = Path(pending["from"]), Path(pending["to"])
+        if target.is_file() and not source.exists():
+            store.finish_set_aside(pending["id"])
+            finished += 1
+        elif source.is_file() and not target.exists():
+            store.drop_set_aside(pending["id"])
+            dropped += 1
+        else:
+            unsure += 1
+            log_event("duplicate_set_aside_unsettled", level="warning", resolutionId=pending["id"],
+                      fileId=pending["removedFileId"], at_old=source.exists(), at_new=target.exists())
+    if finished or dropped or unsure:
+        log_event("duplicate_set_asides_settled", finished=finished, dropped=dropped, unsettled=unsure)
+    return {"finished": finished, "dropped": dropped, "unsettled": unsure}
 
 
 def keep_best_copies(choices: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -8300,6 +8370,10 @@ def _import_selected_comic(
         "size": source_size, "sha256": source_hash, "alreadyPresent": False,
         "quarantineOriginal": str(quarantine_path) if quarantine_path else None,
         "replacementId": str(replacement_id) if replacement_id else None,
+        # The original's own path: a converted replacement is filed at X.cbz
+        # beside an X.cbr original, so a rollback must not take the
+        # destination for it (a RAR would land under the .cbz name).
+        "replacementOriginal": str(replacement_original) if replacement_original else None,
     }
 
 
@@ -9804,7 +9878,7 @@ def _import_completed_download(
                 _rollback_replacement_swap(
                     store,
                     int(imported["replacementId"]),
-                    Path(imported["destination"]),
+                    Path(imported.get("replacementOriginal") or imported["destination"]),
                     Path(imported["quarantineOriginal"]),
                     Path(imported["destination"]),
                 )
@@ -10391,6 +10465,11 @@ def start_catalog_scan(folder: str, recursive: bool = True, metadata_mode: str =
     """Queue an incremental scan and return its durable scan-run id."""
     if metadata_mode not in {"local", "full"}:
         raise ValueError("metadataMode must be 'local' or 'full'")
+    # The reverse of start_cbz_conversion's wait for a scan: the two change
+    # the same rows, and a scan that sees a comic mid-conversion records it
+    # twice.
+    if cbz_conversion_running():
+        raise ValueError("Wait for the CBZ conversion to finish first")
     store = catalog_store()
     scan_id = store.begin_scan(folder, recursive)
     enrich_file = inventory_file if metadata_mode == "local" else enrich
@@ -18210,6 +18289,11 @@ def auto_scan_worker(stop_event: threading.Event = _AUTO_SCAN_STOP) -> None:
         # rest follow as earlier replacements finish.
         auto_replace_damaged()
         try:
+            # Not while the library is being converted to CBZ: a folder
+            # listed before a comic's repoint would mark the converted row
+            # gone and catalog its CBZ as a second comic.
+            if cbz_conversion_running():
+                continue
             store = catalog_store()
             schedule = store.scan_schedule()
             if not auto_scan_due(load_app_settings(), schedule, dt.datetime.now(dt.timezone.utc)):
@@ -18289,6 +18373,13 @@ WORKER_RESTARTS_PER_HOUR = 5
 
 OVERNIGHT_POLL_SECONDS = 60
 OVERNIGHT_ARRIVAL_DAYS = 7
+# How long a night waits before its read is tried again, by why the last run
+# stopped. "done" and "cap": an hour, for comics added since or a limit
+# raised. "vision_unavailable": a quarter hour, a connector's rest. "error":
+# an hour, so one broken comic does not run the plan every minute. A stop
+# by the worker, the window's end or an interrupted run are not listed: they
+# wait for nothing, and the window check decides.
+OVERNIGHT_RERUN_AFTER = {"done": 3600, "cap": 3600, "vision_unavailable": 900, "error": 3600}
 _OVERNIGHT_STOP = threading.Event()
 _OVERNIGHT_THREAD: threading.Thread | None = None
 _OVERNIGHT = threading.local()
@@ -18453,10 +18544,16 @@ def overnight_panels_worker(stop_event: threading.Event = _OVERNIGHT_STOP) -> No
                 continue
             night = overnight_night(now, int(settings["overnightPanelsStart"]))
             last = catalog_store().overnight_runs(1)
-            # A night ends its run when the plan is done; it starts again only
-            # after an hour, for comics added since or a limit raised.
-            if last and last[0]["night"] == night and last[0]["stopped"] in ("done", "cap") and \
-                    (time.time() - _parse_iso_seconds(last[0]["endedAt"])) < 3600:
+            # A night's run ends when the plan is done, its vision limit is
+            # reached, the connector is resting or something broke; each
+            # waits its own while before the night is tried again (for comics
+            # added since, a limit raised, the connector back). Without the
+            # wait a night stopped by an error ran again every minute until
+            # the window closed, each run a row in overnight_panel_runs and a
+            # walk over every planned page. A stop by the worker or the window
+            # waits for nothing: the window check already covers it.
+            if last and last[0]["night"] == night and \
+                    (time.time() - _parse_iso_seconds(last[0]["endedAt"])) < OVERNIGHT_RERUN_AFTER.get(last[0]["stopped"], 0):
                 continue
             overnight_panel_pass(closes)
         except Exception as exc:  # noqa: BLE001 -- the worker lives on to the next minute
@@ -23372,6 +23469,7 @@ def main() -> None:
             log_event("interrupted_direct_downloads_recovered", downloads=restarted)
         if recovered:
             log_event("interrupted_searches_recovered", jobs=recovered)
+        finish_pending_set_asides()
     except Exception as exc:
         log_exception("interrupted_search_recovery_failed", exc, level="warning")
     start_metadata_enrichment_worker()

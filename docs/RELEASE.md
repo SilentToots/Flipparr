@@ -155,7 +155,19 @@ You lose manual corrections, aliases and request history — not files.
 
 ### Unreleased
 
-**Schema:** 77 (adds `overnight_panel_runs`). No change on disk.
+**Schema:** 78 (adds `overnight_panel_runs`; `duplicate_resolutions.state`).
+No change on disk.
+
+- Fixes from the review of the week's deployments (docs/REVIEW_2026-10-14_PLAN.md,
+  Tier A): a replacement converted to CBZ that failed after its swap is
+  rolled back to its own `.cbr` name, not a RAR under the `.cbz` one; a
+  library CBZ conversion cut off between the CBZ landing and its record is
+  finished the next run instead of leaving two copies, its copy in flight is
+  named so a scan skips it, and scans wait while a conversion runs; a night
+  of the overnight read that stopped on an error or a resting connector
+  waits before it is tried again (it ran every minute); "Keep one copy"
+  records a set-aside before the file moves, and an interrupted one is
+  finished or dropped at the next start.
 
 - *Overnight panel read:* between the hours set (midnight to 6 am by
   default, local time), the panels of the comics each profile is likely to
