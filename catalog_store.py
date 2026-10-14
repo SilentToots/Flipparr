@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 75
+SCHEMA_VERSION = 76
 
 # What is kept with a file's signature, so that a changed file is looked at
 # again -- and carried over when the change is only a CBZ conversion of the
@@ -1614,6 +1614,22 @@ class CatalogStore:
                     reader TEXT
                 );
                 CREATE INDEX IF NOT EXISTS archive_checks_file ON archive_checks(file_id, id);
+                -- One copy per issue (schema 76, the owner, 2026-10-14): which
+                -- copy of an issue was kept, which was moved aside to
+                -- .flipparr/duplicates, why and by whom ("admin", or "import"
+                -- when a verified download took a damaged copy's place). The
+                -- moved copy's files row stays, present=0, at its new path.
+                CREATE TABLE IF NOT EXISTS duplicate_resolutions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    issue_id INTEGER NOT NULL,
+                    kept_file_id INTEGER NOT NULL,
+                    removed_file_id INTEGER NOT NULL,
+                    removed_from TEXT NOT NULL,
+                    removed_to TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    resolved_by TEXT NOT NULL,
+                    resolved_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_name TEXT NOT NULL,
@@ -4086,6 +4102,17 @@ class CatalogStore:
             raise LookupError("That comic is not in the library")
         return Path(row["path"])
 
+    def library_root_of_file(self, file_id: int) -> Path:
+        """The library folder a file is in."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT library_roots.path FROM files JOIN library_roots ON library_roots.id=files.root_id WHERE files.id=?",
+                (int(file_id),),
+            ).fetchone()
+        if row is None:
+            raise LookupError("That comic is not in a library folder")
+        return Path(row["path"])
+
     def series_backdrop_files(self, series_run_id: int) -> list[dict[str, Any]]:
         """A run's present comics, lowest issue first.
 
@@ -5656,6 +5683,87 @@ class CatalogStore:
         with self._connect() as connection:
             row = connection.execute("SELECT result_json FROM files WHERE id=?", (int(file_id),)).fetchone()
         return ((_load_json(row["result_json"], {}) or {}).get("file_health") or {}) if row else {}
+
+    def duplicate_issue_copies(self) -> list[dict[str, Any]]:
+        """Every issue with two or more copies in the library, each copy with
+        what tells them apart: health, format, size, whether Flipparr
+        downloaded it, and whether it carries a person's panel fixes."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT l.issue_id, issues.issue_number, issues.series_run_id, series_runs.canonical_title AS run_title,
+                          series_runs.start_year AS run_year, files.id, files.path, files.filename, files.extension,
+                          files.size_bytes, files.result_json,
+                          EXISTS(SELECT 1 FROM acquisition_downloads d WHERE d.destination=files.path
+                                    AND d.status='imported') AS downloaded,
+                          (SELECT COUNT(*) FROM page_panels p WHERE p.file_id=files.id AND p.source='manual') AS manual_panels
+                     FROM file_issue_links l
+                     JOIN files ON files.id=l.file_id AND files.present=1
+                     JOIN issues ON issues.id=l.issue_id
+                     JOIN series_runs ON series_runs.id=issues.series_run_id
+                    WHERE l.issue_id IN (SELECT l2.issue_id FROM file_issue_links l2
+                                           JOIN files f2 ON f2.id=l2.file_id AND f2.present=1
+                                          GROUP BY l2.issue_id HAVING COUNT(*)>1)
+                    ORDER BY series_runs.canonical_title, l.issue_id, files.id"""
+            ).fetchall()
+        groups: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            health = (_load_json(row["result_json"], {}) or {}).get("file_health") or {}
+            group = groups.setdefault(int(row["issue_id"]), {
+                "issueId": str(row["issue_id"]), "issueNumber": row["issue_number"], "runId": str(row["series_run_id"]),
+                "runTitle": row["run_title"], "runYear": row["run_year"], "copies": []})
+            group["copies"].append({
+                "fileId": str(row["id"]), "path": row["path"], "filename": row["filename"],
+                "extension": (row["extension"] or "").lower(), "sizeBytes": int(row["size_bytes"] or 0),
+                "damaged": health.get("status") == "error", "health": health.get("message") or None,
+                "downloaded": bool(row["downloaded"]), "manualPanels": int(row["manual_panels"] or 0)})
+        return list(groups.values())
+
+    def set_aside_duplicate(self, issue_id: int, kept_file_id: int, removed_file_id: int, old_path: str,
+                            new_path: str, *, reason: str, by: str) -> None:
+        """A copy of an issue moved aside: its record stays, not present, at
+        the path it was moved to, and the move is kept as evidence."""
+        with self._write_lock, self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE files SET path=?, present=0, updated_at=? WHERE id=? AND path=? AND present=1",
+                (new_path, _utc_now(), int(removed_file_id), old_path),
+            ).rowcount
+            if not updated:
+                raise LookupError("That copy is no longer where it was")
+            connection.execute(
+                """INSERT INTO duplicate_resolutions(issue_id, kept_file_id, removed_file_id, removed_from, removed_to,
+                                                     reason, resolved_by, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (int(issue_id), int(kept_file_id), int(removed_file_id), old_path, new_path, reason, by, _utc_now()),
+            )
+
+    def present_copy_of(self, file_id: int) -> int | None:
+        """For a copy no longer in the library, another copy of the same
+        issue that is: what a device still holding it reads as."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT other.id FROM file_issue_links mine
+                     JOIN file_issue_links theirs ON theirs.issue_id=mine.issue_id AND theirs.file_id<>mine.file_id
+                     JOIN files other ON other.id=theirs.file_id AND other.present=1
+                    WHERE mine.file_id=? ORDER BY other.id LIMIT 1""",
+                (int(file_id),),
+            ).fetchone()
+        return int(row["id"]) if row else None
+
+    def stored_file_path(self, file_id: int) -> Path | None:
+        """Where a file's record says it is, in the library or set aside."""
+        with self._connect() as connection:
+            row = connection.execute("SELECT path FROM files WHERE id=?", (int(file_id),)).fetchone()
+        return Path(row["path"]) if row else None
+
+    def present_copies_of_issue(self, issue_id: int) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT files.id, files.path, files.result_json FROM file_issue_links l
+                     JOIN files ON files.id=l.file_id AND files.present=1 WHERE l.issue_id=? ORDER BY files.id""",
+                (int(issue_id),),
+            ).fetchall()
+        return [{"id": int(row["id"]), "path": row["path"],
+                 "damaged": ((_load_json(row["result_json"], {}) or {}).get("file_health") or {}).get("status") == "error"}
+                for row in rows]
 
     def converted_from(self, file_id: int, from_signature: str, to_signature: str) -> bool:
         """Whether this file became `to_signature` by a CBZ conversion of
@@ -8804,11 +8912,23 @@ class CatalogStore:
                            file_replacement_requests.status AS replacement_status,
                            issues.id AS issue_id, issues.publication_date,
                            issues.publication_year,
-                           EXISTS(
+                           (EXISTS(
                                SELECT 1 FROM file_issue_links
                                JOIN files ON files.id=file_issue_links.file_id
                                WHERE file_issue_links.issue_id=issues.id AND files.present=1
-                           ) AS direct_owned,
+                           ) OR EXISTS(
+                               -- A file already in the library as this run's
+                               -- issue, even before it is linked to the issue's
+                               -- record: on 2026-09-07 a first load searched
+                               -- in that gap and downloaded 71 issues the
+                               -- library had (one copy per issue, 2026-10-14).
+                               SELECT 1 FROM file_identities
+                               JOIN files ON files.id=file_identities.file_id
+                               WHERE file_identities.series_run_id=issues.series_run_id
+                                 AND file_identities.identity_kind='issue'
+                                 AND ltrim(file_identities.issue_number, '0')=ltrim(issues.issue_number, '0')
+                                 AND files.present=1
+                           )) AS direct_owned,
                            EXISTS(
                                SELECT 1 FROM edition_coverage_claims
                                JOIN file_edition_links

@@ -2392,6 +2392,30 @@ class CatalogStoreTests(unittest.TestCase):
         self.assertTrue(CatalogStore._search_is_due(3, "not-a-date", now))
         self.assertTrue(CatalogStore._search_is_due(3, None, now))
 
+    def test_a_file_already_identified_as_the_issue_counts_as_owned_before_it_is_linked(self):
+        """2026-09-07: a first load searched before the library's files were
+        linked to their issues and downloaded 71 issues it already had."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store, series_id, job_id = self._one_wanted_job(root)
+            path = root / "Example 002.cbz"
+            path.write_bytes(b"comic")
+            with sqlite3.connect(root / "catalog.db") as connection:
+                root_id = connection.execute("SELECT id FROM library_roots").fetchone()[0]
+                file_id = connection.execute(
+                    """INSERT INTO files(root_id, path, filename, extension, size_bytes, mtime_ns, fingerprint, parsed_json,
+                       result_json, created_at, updated_at) VALUES (?, ?, ?, '.cbz', 5, 1, 'f', '{}', '{}', 'now', 'now')""",
+                    (root_id, str(path), path.name)).lastrowid
+                connection.execute(
+                    """INSERT INTO file_identities(file_id, series_run_id, raw_title, normalized_title, identity_kind,
+                       issue_number, match_confidence, match_basis_json, updated_at)
+                       VALUES (?, ?, 'Example', 'example', 'issue', '002', 1.0, '{}', 'now')""",
+                    (file_id, series_id))
+            store.reconcile_acquisition_jobs()
+            with sqlite3.connect(root / "catalog.db") as connection:
+                status = connection.execute("SELECT status FROM acquisition_jobs WHERE id=?", (job_id,)).fetchone()[0]
+            self.assertEqual(status, "fulfilled", "the issue is in the library, linked or not")
+
     def test_reconcile_does_not_erase_what_a_search_found_out(self):
         """"No release found" survived one reconcile pass and no longer.
 

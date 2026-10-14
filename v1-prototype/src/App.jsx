@@ -106,6 +106,7 @@ import { AboutSettings } from "./settings/about.jsx";
 import { SettingsFrame, SettingsIndex } from "./settings/shell.jsx";
 import { LibraryCbzConversion } from "./settings/cbz-conversion.jsx";
 import { DamagedComics } from "./settings/damaged-comics.jsx";
+import { DuplicateCopies } from "./settings/duplicate-copies.jsx";
 import { HeaderContext, PageHeader, SegmentedTabs } from "./frame/header.jsx";
 import { useRefreshOnReturn } from "./refresh-on-return.js";
 import { DEMO_SERIES, LibraryView, catalogPending, logicalCatalogSeries } from "./library/LibraryView.jsx";
@@ -3926,6 +3927,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
         {current === "profile" ? <YourProfileSettings authStatus={authStatus} onSignOut={onSignOut} catalog={catalog} onViewerChanged={onAuthChanged} /> : null}
         {current === "profiles" ? <ProfilesSettings catalog={catalog} onCatalogChanged={onCatalogChanged} /> : null}
         {current === "health" ? <MetadataView {...health} /> : null}
+        {current === "health" ? <DuplicateCopies onChanged={onCatalogChanged} /> : null}
         {current === "library" ? catalogPending(catalog, backendStatus)
           ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." />
           : <>

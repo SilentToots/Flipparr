@@ -11643,6 +11643,94 @@ class ArchiveCheckTests(_ComicCopiesTestCase):
         asked.assert_not_called()
 
 
+class OneCopyPerIssueTests(_ComicCopiesTestCase):
+    """The owner, 2026-10-14: an issue has one copy. 90 had two; the better is
+    kept on the admin's word and the other moved aside, never deleted, with
+    what was read, rated or fixed kept with the issue."""
+
+    def _pair(self, *, small_damaged=False):
+        pages = [self._page(index) for index in range(3)]
+        small = [(f"{index + 1:02d}.jpg", self._page(index, quality=30)) for index in range(3)]
+        ids = self._comics({
+            "Example 001 (big).cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)],
+            "Example 001 (small).cbz": small,
+        })
+        big, little = ids["Example 001 (big).cbz"], ids["Example 001 (small).cbz"]
+        if small_damaged:
+            self.store.set_file_health(little, str(self.root / "Example 001 (small).cbz"),
+                                       {"status": "error", "code": "unreadable_pages", "proven": True, "message": "x"})
+        with sqlite3.connect(self.store.database_path) as connection:
+            issue_id = connection.execute("SELECT issue_id FROM file_issue_links WHERE file_id=?", (big,)).fetchone()[0]
+        return big, little, issue_id
+
+    def test_the_better_copy_is_picked_and_why_said(self):
+        big, little, issue_id = self._pair(small_damaged=True)
+        [group] = app.duplicate_copies()
+        self.assertEqual((group["keepFileId"], group["why"]), (str(big), "the whole copy"))
+        self.store.set_file_health(little, str(self.root / "Example 001 (small).cbz"), {"status": "ok", "message": ""})
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("""INSERT INTO page_panels(file_id, page_member, file_signature, source, panels_json, segmented,
+                                  updated_at) VALUES (?, '01.jpg', 'x', 'manual', '[]', 1, 'now')""", (little,))
+        [group] = app.duplicate_copies()
+        self.assertEqual((group["keepFileId"], group["why"]), (str(little), "the copy with your panel fixes"),
+                         "another release's pages do not match a hand fix")
+
+    def test_a_copy_set_aside_is_moved_never_deleted_and_the_issue_reads_on(self):
+        big, little, issue_id = self._pair()
+        app.set_file_reading_progress(little, 1, user_id=ADMIN_USER_ID)
+        result = app.keep_one_copy(issue_id, big)
+        moved = Path(result["setAside"][0]["to"])
+        self.assertTrue(moved.is_file())
+        self.assertIn("/.flipparr/duplicates/", moved.as_posix())
+        self.assertFalse((self.root / "Example 001 (small).cbz").exists())
+        self.assertEqual(app.duplicate_copies(), [])
+        with sqlite3.connect(self.store.database_path) as connection:
+            present, path = connection.execute("SELECT present, path FROM files WHERE id=?", (little,)).fetchone()
+            [row] = connection.execute("SELECT kept_file_id, removed_file_id, resolved_by FROM duplicate_resolutions").fetchall()
+        self.assertEqual((present, path), (0, str(moved)), "the record stays, set aside")
+        self.assertEqual(row, (big, little, "admin"))
+        place = app.file_reading_progress(big, user_id=ADMIN_USER_ID)
+        self.assertEqual(place["page"], 1, "read on the copy that stayed")
+
+    def test_a_device_holding_the_set_aside_copy_keeps_it_and_its_saves_land(self):
+        big, little, issue_id = self._pair()
+        held = app._file_signature(self.root / "Example 001 (small).cbz")
+        app.keep_one_copy(issue_id, big)
+        [answer] = app.offline_check([{"fileId": little, "fileSignature": held}], lambda _id: True, user_id=ADMIN_USER_ID)
+        self.assertEqual(answer["status"], "ok", "gone would delete the download")
+        self.assertEqual(app.copy_in_library(little, 2), (big, 2), "its page, by name, in the copy that stayed")
+        with self.assertRaises(LookupError):
+            app.copy_in_library(987654, 0)
+
+    def test_an_import_for_an_issue_already_there_is_not_filed_beside_it(self):
+        big, little, issue_id = self._pair()
+        download = self.root / "incoming" / "Example 001 (another).cbz"
+        download.parent.mkdir()
+        with zipfile.ZipFile(download, "w") as archive:
+            archive.writestr("01.jpg", self._page(5))
+        context = {"seriesTitle": "Example", "seriesYear": 2020, "issueNumber": "1", "publisher": "X",
+                   "issueId": str(issue_id)}
+        before = sorted(path.name for path in self.root.glob("*.cbz"))
+        placed = app._import_selected_comic({"path": str(download)}, context, {"job_id": 1}, self.root)
+        self.assertTrue(placed["alreadyInLibrary"])
+        self.assertEqual(sorted(path.name for path in self.root.glob("*.cbz")), before)
+        self.assertFalse(any(self.root.rglob("Example (2020) #001*")), "nothing filed beside it")
+
+    def test_a_download_read_whole_takes_a_damaged_only_copys_place(self):
+        pages = [self._page(index) for index in range(2)]
+        ids = self._comics({"Example 001.cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)],
+                            "Example 001 (new).cbz": [(f"{index + 1:02d}.jpg", data) for index, data in enumerate(pages)]})
+        old, new = ids["Example 001.cbz"], ids["Example 001 (new).cbz"]
+        self.store.set_file_health(old, str(self.root / "Example 001.cbz"), {"status": "error", "code": "unreadable_pages",
+                                                                          "proven": True, "message": "x"})
+        issue_id = self.store.issue_of_file(new)
+        app._set_aside_damaged_copies(new, {"issueId": str(issue_id)})
+        self.assertFalse((self.root / "Example 001.cbz").exists())
+        with sqlite3.connect(self.store.database_path) as connection:
+            self.assertEqual(connection.execute("SELECT resolved_by FROM duplicate_resolutions").fetchone()[0], "import")
+        app._set_aside_damaged_copies(new, {"issueId": str(issue_id), "replacementId": "3"})  # a replacement: its own swap
+
+
 class ComicPlaceTests(_ComicCopiesTestCase):
     """docs/READING_STATE_PLAN.md step 2b: where a comic was left is the
     comic's, and opening another copy of it -- a replacement with an ad page

@@ -7613,6 +7613,93 @@ def auto_replace_damaged() -> dict[str, Any] | None:
         return None
 
 
+# ---- One copy per issue (the owner, 2026-10-14) -------------------------------
+# 90 issues had two copies, 71 of them from one first load (2026-09-07) that
+# searched before the library's files were linked to their issues. The wanted
+# list now counts a file identified as the issue as owned
+# (reconcile_acquisition_jobs); an import never files beside a copy already
+# there; and Library health lists the pairs, the better copy picked, to keep
+# one on the admin's word. A copy set aside goes to .flipparr/duplicates (scans
+# skip it), its record kept, so what was read, rated or fixed with it stays
+# with the issue and a device holding it keeps reading it.
+
+DUPLICATES_DIR = "duplicates"
+
+
+def _copy_rank(copy: dict[str, Any]) -> tuple:
+    """Better first: reads whole; carries a person's panel fixes (another
+    release's pages do not match them); CBZ; the larger file, as the
+    resolution. Page count is no measure: releases differ by ads and credit
+    pages."""
+    return (not copy["damaged"], copy["manualPanels"] > 0, copy["extension"] == ".cbz", copy["sizeBytes"])
+
+
+def _why_kept(best: dict[str, Any], others: list[dict[str, Any]]) -> str:
+    """Which copy is kept, named by what sets it apart: "keeps the …"."""
+    if any(other["damaged"] for other in others) and not best["damaged"]:
+        return "the whole copy"
+    if best["manualPanels"] and not any(other["manualPanels"] for other in others):
+        return "the copy with your panel fixes"
+    if best["extension"] == ".cbz" and any(other["extension"] != ".cbz" for other in others):
+        return "the CBZ"
+    return "the larger copy"
+
+
+def duplicate_copies() -> list[dict[str, Any]]:
+    """Each issue with two copies or more, its copies best first, and the one
+    to keep and why."""
+    groups = catalog_store().duplicate_issue_copies()
+    for group in groups:
+        group["copies"].sort(key=_copy_rank, reverse=True)
+        best = group["copies"][0]
+        group["keepFileId"] = best["fileId"]
+        group["why"] = _why_kept(best, group["copies"][1:])
+    return groups
+
+
+def keep_one_copy(issue_id: int, keep_file_id: int, *, by: str = "admin", reason: str | None = None) -> dict[str, Any]:
+    """Keep one copy of an issue and set the others aside, each moved to
+    .flipparr/duplicates in its library folder, never deleted."""
+    store = catalog_store()
+    copies = store.present_copies_of_issue(issue_id)
+    if not any(copy["id"] == int(keep_file_id) for copy in copies):
+        raise LookupError("That copy is not one of this issue's")
+    moved = []
+    for copy in copies:
+        if copy["id"] == int(keep_file_id):
+            continue
+        source = Path(copy["path"])
+        root = store.library_root_of_file(copy["id"])
+        target = root / MANAGED_LIBRARY_DIR / DUPLICATES_DIR / str(int(issue_id)) / source.relative_to(root)
+        if target.exists():
+            target = target.with_name(f"{target.stem}.{copy['id']}{target.suffix}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(source, target)
+        try:
+            store.set_aside_duplicate(issue_id, keep_file_id, copy["id"], str(source), str(target),
+                                      reason=reason or "one copy per issue", by=by)
+        except Exception:
+            os.replace(target, source)
+            raise
+        moved.append({"fileId": str(copy["id"]), "to": str(target)})
+    log_event("duplicate_copies_set_aside", issueId=issue_id, kept=keep_file_id, moved=len(moved), by=by)
+    return {"issueId": str(issue_id), "keptFileId": str(keep_file_id), "setAside": moved}
+
+
+def keep_best_copies(choices: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """"Keep the best of each", or the copies the admin chose: one per issue."""
+    groups = {group["issueId"]: group for group in duplicate_copies()}
+    plan = choices if choices is not None else [{"issueId": key, "keepFileId": group["keepFileId"]}
+                                                for key, group in groups.items()]
+    done, failed = [], []
+    for choice in plan:
+        try:
+            done.append(keep_one_copy(int(choice["issueId"]), int(choice["keepFileId"])))
+        except (LookupError, ValueError, OSError) as exc:
+            failed.append({"issueId": str(choice.get("issueId")), "error": shown(exc) or type(exc).__name__})
+    return {"kept": len(done), "setAside": sum(len(item["setAside"]) for item in done), "failed": failed}
+
+
 def _comic_archive_as_cbz(selected: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     """A comic that arrived as a RAR (or 7z), as the CBZ the library keeps,
     when `convertNewToCbz` is on. Only the release already chosen, and never
@@ -7862,7 +7949,7 @@ def _catalog_imported_issue(destination: Path, context: dict[str, Any], library_
     # it would be the wrong one whenever a series has been relaunched under the
     # same name, which is the ordinary case for a long-running character.
     requested_run = str(context.get("seriesId") or "").strip()
-    return catalog_store().ingest_acquisition_import(
+    file_id = catalog_store().ingest_acquisition_import(
         str(library_root.resolve()),
         parsed,
         result,
@@ -7875,6 +7962,28 @@ def _catalog_imported_issue(destination: Path, context: dict[str, Any], library_
         },
         series_run_id=int(requested_run) if requested_run.isdigit() else None,
     )
+    _set_aside_damaged_copies(int(file_id), context)
+    return file_id
+
+
+def _set_aside_damaged_copies(file_id: int, context: dict[str, Any]) -> None:
+    """A download read whole, filed for an issue whose only copies were
+    damaged, takes their place: they are set aside as duplicates, as a
+    replacement's original goes to quarantine. Never for a replacement,
+    which has its own swap, nor when this copy is itself damaged."""
+    issue_id = str(context.get("issueId") or "")
+    if context.get("replacementId") or not issue_id.isdigit():
+        return
+    copies = catalog_store().present_copies_of_issue(int(issue_id))
+    mine = next((copy for copy in copies if copy["id"] == int(file_id)), None)
+    others = [copy for copy in copies if copy["id"] != int(file_id)]
+    if mine is None or mine["damaged"] or not others or not all(copy["damaged"] for copy in others):
+        return
+    try:
+        keep_one_copy(int(issue_id), int(file_id), by="import",
+                      reason="a download read whole took the damaged copy's place")
+    except (LookupError, ValueError, OSError) as exc:
+        log_exception("damaged_copy_set_aside_failed", exc, level="warning", issueId=issue_id, fileId=file_id)
 
 
 def _replacement_quarantine_path(
@@ -8081,6 +8190,22 @@ def _import_selected_comic(
     replacement_original = (
         Path(str(context["replacementFilePath"])) if context.get("replacementFilePath") else None
     )
+    if not replacement_id and str(context.get("issueId") or "").isdigit():
+        # One copy per issue: a download for an issue already in the library
+        # (a pack, a release taken by hand, a search that ran before the
+        # library's files were linked) is never filed beside it. The copy
+        # there stands, unless every copy there is damaged: then this one,
+        # read whole, takes its place (_catalog_imported_issue).
+        others = [copy for copy in store.present_copies_of_issue(int(context["issueId"]))
+                  if Path(copy["path"]).resolve() != destination.resolve()]
+        standing = next((copy for copy in others if not copy["damaged"]), None)
+        if standing is not None:
+            log_event("import_already_in_library", issueId=context.get("issueId"), kept=standing["path"],
+                      source=source.name)
+            return {
+                "source": str(source), "destination": standing["path"], "size": source_size,
+                "sha256": source_hash, "alreadyPresent": True, "alreadyInLibrary": True,
+            }
     replacing_destination = bool(
         replacement_id and replacement_original
         and destination.resolve() == replacement_original.resolve()
@@ -15223,7 +15348,15 @@ def offline_check(entries: Any, may_see: Callable[[int], bool], *, user_id: int 
             path = store.library_file_path(file_id)
             signature = _file_signature(path)
         except (LookupError, OSError):
-            answers.append({"fileId": str(file_id), "status": "gone"})
+            # A copy set aside as a duplicate is still that issue, and the
+            # issue is still in the library: the device keeps it, read as
+            # the copy that stayed (one copy per issue, 2026-10-14). Told
+            # "gone", the app would delete the download.
+            kept = store.present_copy_of(file_id)
+            if kept is not None and may_see(kept):
+                answers.append({"fileId": str(file_id), "status": "ok", "readAs": str(kept)})
+            else:
+                answers.append({"fileId": str(file_id), "status": "gone"})
             continue
         held = str(entry.get("fileSignature") or "")
         if not may_see(file_id):
@@ -15236,12 +15369,14 @@ def offline_check(entries: Any, may_see: Callable[[int], bool], *, user_id: int 
             status = "ok"
         answers.append({"fileId": str(file_id), "status": status})
     if user_id is not None:
-        readable = [int(answer["fileId"]) for answer in answers if answer["status"] in ("ok", "changed")]
-        states = store.reading_states(readable, user_id=user_id)
+        read_as = {int(answer["fileId"]): int(answer.get("readAs") or answer["fileId"])
+                   for answer in answers if answer["status"] in ("ok", "changed")}
+        states = store.reading_states(list(set(read_as.values())), user_id=user_id)
         for answer in answers:
             if answer["status"] in ("ok", "changed"):
-                state = states.get(int(answer["fileId"]), {"lastReadAt": None, "finished": False})
+                state = states.get(read_as[int(answer["fileId"])], {"lastReadAt": None, "finished": False})
                 answer.update(state)
+            answer.pop("readAs", None)
     return answers
 
 
@@ -16326,6 +16461,37 @@ def set_file_reading_progress(
     if pages[page] not in catalog_store().page_fingerprints(file_id, signature):
         fingerprint_in_background(file_id)
     return saved
+
+
+def copy_in_library(file_id: int, page: int | None = None) -> tuple[int, int | None]:
+    """The copy a reading of this file lands on, and its page: the file
+    itself while it is in the library; once set aside as a duplicate, the
+    issue's copy that stayed -- the same page by name, else the same point
+    of the way through. A device holding the set-aside copy keeps reading
+    and saving as before (one copy per issue, 2026-10-14)."""
+    store = catalog_store()
+    try:
+        store.library_file_path(file_id)
+        return file_id, page
+    except LookupError:
+        kept = store.present_copy_of(file_id)
+        if kept is None:
+            raise
+    if page is None:
+        return kept, None
+    kept_pages = cached_page_members(store.library_file_path(kept))
+    if not kept_pages:
+        raise LookupError("That comic has no pages in the library")
+    old_path = store.stored_file_path(file_id)
+    try:
+        old_pages = cached_page_members(old_path) if old_path and old_path.is_file() else []
+    except Exception:  # noqa: BLE001 -- the set-aside copy is a help here, not a need
+        old_pages = []
+    if 0 <= page < len(old_pages) and old_pages[page] in kept_pages:
+        return kept, kept_pages.index(old_pages[page])
+    if len(old_pages) > 1:
+        return kept, min(len(kept_pages) - 1, round(page / (len(old_pages) - 1) * (len(kept_pages) - 1)))
+    return kept, max(0, min(page, len(kept_pages) - 1))
 
 
 def mark_file_read(file_id: int, read: bool, *, user_id: int, at: str | None = None) -> dict[str, Any]:
@@ -20255,7 +20421,8 @@ class Handler(BaseHTTPRequestHandler):
         file_progress_match = re.fullmatch(r"/api/v1/files/(\d+)/progress", parsed_url.path)
         if file_progress_match:
             try:
-                payload = file_reading_progress(int(file_progress_match.group(1)), user_id=self._viewer_id())
+                payload = file_reading_progress(copy_in_library(int(file_progress_match.group(1)))[0],
+                                                user_id=self._viewer_id())
             except LookupError as exc:
                 self.send_json({"error": str(exc)}, 404)
                 return
@@ -20287,6 +20454,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/library/archive-check":
             self.send_json(archive_check_status())
+            return
+        if parsed_url.path == "/api/v1/library/duplicates":
+            self.send_json({"issues": duplicate_copies()})
             return
         if parsed_url.path == "/api/v1/library/cbz-conversion":
             self.send_json(cbz_conversion_status())
@@ -20818,6 +20988,17 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_json({"error": "Say start or stop"}, 400)
             return
+        if parsed_url.path == "/api/v1/library/duplicates":
+            # Keep one copy of each issue: the admin's choices, or the best of
+            # each when none are given. Copies are moved aside, never deleted.
+            choices = payload.get("keep")
+            if choices is not None and (not isinstance(choices, list) or not all(
+                    isinstance(item, dict) and str(item.get("issueId", "")).isdigit()
+                    and str(item.get("keepFileId", "")).isdigit() for item in choices)):
+                self.send_json({"error": "keep is a list of {issueId, keepFileId}"}, 400)
+                return
+            self.send_json(keep_best_copies(choices))
+            return
         if parsed_url.path == "/api/v1/library/replace-damaged":
             ids = payload.get("fileIds")
             if ids is not None and (not isinstance(ids, list) or not all(str(value).isdigit() for value in ids)):
@@ -21334,6 +21515,11 @@ class Handler(BaseHTTPRequestHandler):
             file_id = int(file_progress_post.group(1))
             page = payload.get("page")
             try:
+                # A copy set aside as a duplicate saves onto the copy that stayed.
+                page_given = isinstance(page, int) and not isinstance(page, bool)
+                file_id, mapped = copy_in_library(file_id, page if page_given else None)
+                if page_given:
+                    page = mapped
                 # Flipparr View's saves carry when they were made, so one
                 # replayed after a flight cannot undo a later one.
                 at = reading_time(payload.get("at"))
