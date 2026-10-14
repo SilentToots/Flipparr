@@ -468,6 +468,25 @@ panel detectors are built on AGPL-licensed architectures or trained on
 research-only datasets, so check a model's terms before you use it -- they
 are yours to accept, and Flipparr does not redistribute any model.
 
+### The overnight panel read
+
+A page's panels are read the first time someone opens it in panel view; with
+the vision assistant reading every page, that takes a few seconds, felt at
+the start of a new comic. Between the hours set under Settings › Reader ›
+Overnight panel read (midnight to 6 am by default, in the container's local
+time -- set `TZ` in `.env`), Flipparr reads ahead the comics each profile is
+likely to open next: Keep Reading and each run's next issue, then issues that
+arrived in the last week, then comics downloaded to Flipparr View. An admin's
+comics go to the vision assistant when it reads every page, up to the
+nightly limit (1,000 pages by default, about $5 at Sonnet's price; "No vision
+overnight" uses Flipparr's own reading); readers' comics use Flipparr's own
+reading unless readers' pages are allowed. Pages already read are skipped,
+so a night left unfinished carries on the next. A page it has not reached is
+still read the moment it is opened. Each night's run -- pages read, how many
+by vision, why it stopped -- is kept in the catalog and shown on Settings ›
+Reader and Settings › System; Flipparr View picks up the new panels for
+comics already downloaded the next time it checks its downloads.
+
 ---
 
 ## 4. Library import, backup and upgrade

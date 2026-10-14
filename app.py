@@ -585,12 +585,34 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # Off until the admin turns it on (the owner, 2026-10-13); Library
     # health's "Replace all damaged" does the same by hand.
     "autoReplaceDamaged": False,
+    # The overnight panel read (the owner, 2026-10-14): between these local
+    # hours, the panels of the comics each profile is likely to open next
+    # -- Keep Reading and each run's next issue, new arrivals, comics on
+    # Flipparr View devices -- are read ahead, so opening one is instant. A
+    # page nobody has read yet is still read the moment it is opened.
+    # `overnightVisionPages` caps the vision connector's pages a night
+    # (0: Flipparr's own reading only).
+    "overnightPanels": True,
+    "overnightPanelsStart": 0,
+    "overnightPanelsEnd": 6,
+    "overnightVisionPages": 1000,
 }
 RELEASE_SOURCES = ("usenet", "torrent", "direct_site")
 _APP_SETTINGS_BOOL_KEYS = frozenset({
     "collectedEditionsEnabled", "setupCompleted", "autoScanEnabled", "visionReadsEveryPage", "visionForReaders",
     "ratingsFromCovers", "communityListsEnabled", "logClientAddresses", "convertNewToCbz", "autoReplaceDamaged",
+    "overnightPanels",
 })
+OVERNIGHT_VISION_CHOICES = (0, 100, 300, 1000)
+_OVERNIGHT_HOUR_KEYS = ("overnightPanelsStart", "overnightPanelsEnd")
+
+
+def _valid_overnight(key: str, value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return False
+    if key in _OVERNIGHT_HOUR_KEYS:
+        return 0 <= value <= 23
+    return value in OVERNIGHT_VISION_CHOICES
 # Every quarter hour, hour, six hours, or day.
 AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
 
@@ -613,6 +635,9 @@ def load_app_settings() -> dict[str, Any]:
                         settings[key] = value
                 elif key == "autoScanIntervalMinutes":
                     if isinstance(value, int) and not isinstance(value, bool) and value in AUTO_SCAN_INTERVALS:
+                        settings[key] = value
+                elif key in (*_OVERNIGHT_HOUR_KEYS, "overnightVisionPages"):
+                    if _valid_overnight(key, value):
                         settings[key] = value
                 elif key == "sourcePriority":
                     legacy = {old: new for new, old in _LEGACY_SOURCE_NAMES.items()}
@@ -664,6 +689,10 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
             not isinstance(value, int) or isinstance(value, bool) or value not in AUTO_SCAN_INTERVALS
         ):
             raise ValueError("Choose one of the scan intervals Flipparr offers")
+        if key in _OVERNIGHT_HOUR_KEYS and not _valid_overnight(key, value):
+            raise ValueError("Choose an hour from 0 to 23")
+        if key == "overnightVisionPages" and not _valid_overnight(key, value):
+            raise ValueError("Choose one of the nightly limits Flipparr offers")
         if key == "sourcePriority":
             if not _is_source_order(value):
                 raise ValueError("List Usenet, torrents and direct downloads once each")
@@ -15380,6 +15409,12 @@ def offline_check(entries: Any, may_see: Callable[[int], bool], *, user_id: int 
                 state = states.get(read_as[int(answer["fileId"])], {"lastReadAt": None, "finished": False})
                 answer.update(state)
             answer.pop("readAs", None)
+    # When each comic's panels last changed: the overnight read finds panels
+    # for comics already on a device, which take them again when newer.
+    panels_at = store.panels_updated_at([int(answer["fileId"]) for answer in answers if answer["status"] in ("ok", "changed")])
+    for answer in answers:
+        if int(answer["fileId"]) in panels_at:
+            answer["panelsAt"] = panels_at[int(answer["fileId"])]
     return answers
 
 
@@ -15626,6 +15661,10 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
     then the quadrants stand. A connector that did not answer at all raises
     VisionUnavailable, and the page is not counted as asked.
     """
+    # A page (or half a spread) put to the connector, counted for the
+    # overnight read's nightly limit when it is the one asking.
+    if getattr(_OVERNIGHT, "active", False):
+        _OVERNIGHT.vision_pages = getattr(_OVERNIGHT, "vision_pages", 0) + 1
     examples = list(examples or [])
     drawn: list[dict[str, float]] = []
 
@@ -15800,19 +15839,23 @@ def _lane_for_thread(name: str):
         _CPU_LANE.name = previous
 
 
-def file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
+def file_page_panels(file_id: int, index: int, *, allow_vision: bool = True,
+                     lane: str | None = None) -> dict[str, Any]:
     """Where the panels are on one page, in the order its run reads.
 
     Read from the 600px render the first time a page is asked about and kept,
     so a comic is segmented once, as it is read -- on demand, never as a
-    library sweep. An automatic reading is redone when the file changes
+    library sweep; the overnight read (`overnight_panel_pass`) asks the same
+    way, ahead of time, for the comics each profile is likely to open next.
+    An automatic reading is redone when the file changes
     underneath it; a person's, like a chosen backdrop, stands. An unsegmented
     page answers with no panels, and the reader draws its four quadrants.
     """
     with _PANELS_INFLIGHT_LOCK:
         lock = _PANELS_INFLIGHT.setdefault((int(file_id), int(index)), threading.Lock())
     # `vision=no` is a download's question (the route says so): bulk work.
-    with lock, _lane_for_thread("reading" if allow_vision else "background"):
+    # The overnight read asks with the vision connector in the background lane.
+    with lock, _lane_for_thread(lane or ("reading" if allow_vision else "background")):
         try:
             return _file_page_panels(file_id, index, allow_vision=allow_vision)
         finally:
@@ -15958,6 +16001,39 @@ def _comic_page_reading(store: Any, file_id: int, member: str, signature: str, r
     return found
 
 
+def _reading_due(record: dict[str, Any] | None, signature: str, session: Any, vision: bool,
+                 every: bool) -> tuple[bool, bool]:
+    """Whether a kept reading must be read again: (stale, upgrade). A machine's
+    reading of a file since changed is stale; one made without a tier there now
+    -- the detector for an "auto" row, the vision connector for a row it could
+    still help -- is upgraded; a person's stands regardless."""
+    machine = record is not None and record["source"] in ("auto", "model", "vlm")
+    stale = machine and record["fileSignature"] != signature
+    upgrade = record is not None and (
+        (record["source"] == "auto" and session is not None)
+        or (record["source"] in ("auto", "model") and vision
+            and (every or not record["segmented"] or panel_finder.ambiguous_layout(record["panels"])))
+    )
+    return bool(stale), bool(upgrade)
+
+
+def page_panels_settled(file_id: int, index: int, *, allow_vision: bool) -> bool:
+    """Whether a page's kept reading is final as `file_page_panels` would see
+    it: opening it would read nothing. The overnight read skips such pages."""
+    store = catalog_store()
+    path = store.library_file_path(file_id)
+    pages = cached_page_members(path)
+    if not 0 <= index < len(pages):
+        return True
+    record = store.page_panels(file_id, pages[index])
+    if record is None:
+        return False
+    vision = allow_vision and vision_model_ready()
+    every = vision and bool(load_app_settings().get("visionReadsEveryPage"))
+    stale, upgrade = _reading_due(record, _file_signature(path), panel_model_session(), vision, every)
+    return not stale and not upgrade
+
+
 def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
     from PIL import Image
 
@@ -15979,17 +16055,7 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
     # questions it.
     every = vision and bool(load_app_settings().get("visionReadsEveryPage"))
     direction = store.file_reading_direction(file_id)
-    # A reading is redone when the file changed underneath it; a reading made
-    # without a tier is redone once that tier is there -- the detector for an
-    # "auto" row, the vision connector for a row it could still help; a
-    # person's stands regardless. Every automatic source counts as a machine's.
-    machine = record is not None and record["source"] in ("auto", "model", "vlm")
-    stale = machine and record["fileSignature"] != signature
-    upgrade = record is not None and (
-        (record["source"] == "auto" and session is not None)
-        or (record["source"] in ("auto", "model") and vision
-            and (every or not record["segmented"] or panel_finder.ambiguous_layout(record["panels"])))
-    )
+    stale, upgrade = _reading_due(record, signature, session, vision, every)
     hashes: tuple[str, str] | None = None
     if record is None or stale or upgrade:
         # A reader's own fixes to this comic go with the question, when a
@@ -18209,6 +18275,231 @@ _WORKERS_STOPPING = threading.Event()
 WORKER_RESTARTS_PER_HOUR = 5
 
 
+# ---- The overnight panel read (the owner, 2026-10-14) ------------------------
+# Panels are read the first time a page is opened -- with "vision reads every
+# page" on, by the vision connector, 3-6 s a page and at worst 20+, felt at
+# the start of a new comic. Between the hours set (local time; the container's
+# TZ), the comics each profile is likely to open next are read ahead: Keep
+# Reading and each run's next issue, then new arrivals, then comics on
+# Flipparr View devices. Admins' comics with the vision connector when it reads
+# every page, up to a nightly number of pages; readers' with Flipparr's own
+# reading unless the connector is allowed for readers. A page opened that
+# nothing read yet is still read on the spot, as always: this only makes it
+# rarer. Each night's run is kept in overnight_panel_runs.
+
+OVERNIGHT_POLL_SECONDS = 60
+OVERNIGHT_ARRIVAL_DAYS = 7
+_OVERNIGHT_STOP = threading.Event()
+_OVERNIGHT_THREAD: threading.Thread | None = None
+_OVERNIGHT = threading.local()
+
+
+def overnight_window_end(now: dt.datetime, start: int, end: int) -> dt.datetime | None:
+    """When the overnight window `now` falls in closes, or None outside it. A
+    window may cross midnight (22 to 6); start == end is no window."""
+    hour = now.hour
+    if start == end:
+        return None
+    inside = start <= hour < end if start < end else (hour >= start or hour < end)
+    if not inside:
+        return None
+    closes = now.replace(hour=end, minute=0, second=0, microsecond=0)
+    return closes if closes > now else closes + dt.timedelta(days=1)
+
+
+def overnight_night(now: dt.datetime, start: int) -> str:
+    """The night a moment belongs to: the local date its window opened."""
+    opened = now.replace(hour=start, minute=0, second=0, microsecond=0)
+    if opened > now:
+        opened -= dt.timedelta(days=1)
+    return opened.date().isoformat()
+
+
+def _file_visible_to(viewer: Viewer, file_id: int, ratings: dict[int, Any]) -> bool:
+    if viewer.is_admin:
+        return True
+    run_id = catalog_store().run_for_file(int(file_id))
+    return viewer_may_see_run(viewer, ratings.get(int(run_id)) if run_id is not None else None)
+
+
+def overnight_panel_plan() -> list[dict[str, Any]]:
+    """The comics to read tonight, most likely to be opened first, each once:
+    {fileId, vision, why, userId}. Admins first, then readers."""
+    store = catalog_store()
+    settings = load_app_settings()
+    vision_on = vision_model_ready() and bool(settings.get("visionReadsEveryPage"))
+    readers_vision = vision_on and bool(settings.get("visionForReaders"))
+    ratings = store.run_age_ratings()
+    arrivals = store.recent_import_files(OVERNIGHT_ARRIVAL_DAYS)
+    users = sorted((user for user in store.list_users() if not user.get("disabled")),
+                   key=lambda user: (user["role"] != "admin", int(user["id"])))
+    plan: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for user in users:
+        viewer = viewer_for(user)
+        if viewer is None:
+            continue
+        use_vision = vision_on if viewer.is_admin else readers_vision
+        items = continue_reading(user_id=int(user["id"])).get("items", [])
+        sources = (
+            ("keep reading", [item["fileId"] for item in items if item.get("resume") == "continue"]),
+            ("next issue", [item["fileId"] for item in items if item.get("resume") == "next"]),
+            ("new arrival", arrivals),
+            ("on a device", [row["fileId"] for row in store.offline_downloads(user_id=int(user["id"]), on_device=True)
+                             if row.get("fileId")]),
+        )
+        for why, file_ids in sources:
+            for value in file_ids:
+                file_id = int(value)
+                if file_id in seen or not _file_visible_to(viewer, file_id, ratings):
+                    continue
+                seen.add(file_id)
+                plan.append({"fileId": file_id, "vision": use_vision, "why": why, "userId": int(user["id"])})
+    return plan
+
+
+def overnight_panel_pass(deadline: dt.datetime, *, now: Callable[[], dt.datetime] | None = None) -> dict[str, Any]:
+    """Read tonight's plan until the window closes, the plan is done or the
+    worker stops. Pages already read are skipped, so a night left unfinished
+    is taken up the next. Vision comics wait for the next night once the
+    night's limit is reached or the connector is resting; Flipparr's own
+    reading goes on until the window closes."""
+    clock = now or (lambda: dt.datetime.now().astimezone())
+    store = catalog_store()
+    settings = load_app_settings()
+    night = overnight_night(clock(), int(settings["overnightPanelsStart"]))
+    limit = int(settings["overnightVisionPages"])
+    used = store.overnight_vision_pages(night)
+    run_id = store.start_overnight_run(night)
+    counts = {"comics": 0, "pagesRead": 0, "visionPages": 0, "localPages": 0, "skippedSettled": 0,
+              "deferredComics": 0, "failedComics": 0}
+    by_source: dict[str, int] = {}
+    stopped = "done"
+    deferred_why: str | None = None
+    _OVERNIGHT.active = True
+    _OVERNIGHT.vision_pages = 0
+    try:
+        plan = overnight_panel_plan()
+        for item in plan:
+            worker_beat("overnight")
+            if _OVERNIGHT_STOP.is_set() or clock() >= deadline:
+                break
+            use_vision = bool(item["vision"]) and limit > 0
+            if use_vision and (used + _OVERNIGHT.vision_pages >= limit or not vision_model_ready()):
+                counts["deferredComics"] += 1
+                deferred_why = deferred_why or ("cap" if used + _OVERNIGHT.vision_pages >= limit else "vision_unavailable")
+                continue
+            file_id = int(item["fileId"])
+            try:
+                pages = cached_page_members(store.library_file_path(file_id))
+            except (LookupError, OSError, ValueError):
+                continue
+            counts["comics"] += 1
+            by_source[item["why"]] = by_source.get(item["why"], 0) + 1
+            for index in range(len(pages)):
+                if _OVERNIGHT_STOP.is_set() or clock() >= deadline:
+                    break
+                if use_vision and used + _OVERNIGHT.vision_pages >= limit:
+                    counts["deferredComics"] += 1
+                    deferred_why = deferred_why or "cap"
+                    break
+                try:
+                    if page_panels_settled(file_id, index, allow_vision=use_vision):
+                        counts["skippedSettled"] += 1
+                        continue
+                    before = _OVERNIGHT.vision_pages
+                    file_page_panels(file_id, index, allow_vision=use_vision, lane="background")
+                except Exception as exc:  # noqa: BLE001 -- one comic's trouble is said, and the night goes on
+                    log_exception("overnight_panels_page_failed", exc, level="warning", fileId=file_id, page=index)
+                    counts["failedComics"] += 1
+                    break
+                counts["pagesRead"] += 1
+                if _OVERNIGHT.vision_pages > before:
+                    counts["visionPages"] += _OVERNIGHT.vision_pages - before
+                else:
+                    counts["localPages"] += 1
+            store.finish_overnight_run(run_id, stopped=None, detail={"sources": by_source},
+                                       **{**counts, "visionPages": _OVERNIGHT.vision_pages})
+        if _OVERNIGHT_STOP.is_set():
+            stopped = "stopped"
+        elif clock() >= deadline:
+            stopped = "window_end"
+        elif deferred_why:
+            stopped = deferred_why
+    except Exception as exc:  # noqa: BLE001 -- the night's record says what stopped it
+        stopped = "error"
+        log_exception("overnight_panels_failed", exc, level="warning")
+    finally:
+        _OVERNIGHT.active = False
+        counts["visionPages"] = _OVERNIGHT.vision_pages
+        store.finish_overnight_run(run_id, stopped=stopped, detail={"sources": by_source}, **counts)
+    log_event("overnight_panels_run", night=night, stopped=stopped, **counts)
+    return {"night": night, "stopped": stopped, **counts}
+
+
+def overnight_panels_worker(stop_event: threading.Event = _OVERNIGHT_STOP) -> None:
+    """Once a minute: inside the window, with the read on and nothing left of
+    tonight's already done, read until the window closes."""
+    worker_beat("overnight")
+    while not stop_event.wait(OVERNIGHT_POLL_SECONDS):
+        worker_beat("overnight")
+        try:
+            settings = load_app_settings()
+            if not settings.get("overnightPanels"):
+                continue
+            now = dt.datetime.now().astimezone()
+            closes = overnight_window_end(now, int(settings["overnightPanelsStart"]), int(settings["overnightPanelsEnd"]))
+            if closes is None:
+                continue
+            night = overnight_night(now, int(settings["overnightPanelsStart"]))
+            last = catalog_store().overnight_runs(1)
+            # A night ends its run when the plan is done; it starts again only
+            # after an hour, for comics added since or a limit raised.
+            if last and last[0]["night"] == night and last[0]["stopped"] in ("done", "cap") and \
+                    (time.time() - _parse_iso_seconds(last[0]["endedAt"])) < 3600:
+                continue
+            overnight_panel_pass(closes)
+        except Exception as exc:  # noqa: BLE001 -- the worker lives on to the next minute
+            log_exception("overnight_panels_worker_failed", exc, level="warning")
+            worker_problem("overnight", exc)
+
+
+def _parse_iso_seconds(value: Any) -> float:
+    try:
+        return dt.datetime.fromisoformat(str(value)).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def start_overnight_panels_worker() -> threading.Thread:
+    global _OVERNIGHT_THREAD
+    if _OVERNIGHT_THREAD and _OVERNIGHT_THREAD.is_alive():
+        return _OVERNIGHT_THREAD
+    _OVERNIGHT_STOP.clear()
+    _OVERNIGHT_THREAD = threading.Thread(target=overnight_panels_worker, name="flipparr-overnight-panels", daemon=True)
+    _OVERNIGHT_THREAD.start()
+    return _OVERNIGHT_THREAD
+
+
+def overnight_panels_status() -> dict[str, Any]:
+    """Settings -> Reader and System: the read's settings, its last nights and
+    what tonight would read."""
+    settings = load_app_settings()
+    plan = overnight_panel_plan()
+    tonight: dict[str, int] = {}
+    for item in plan:
+        key = f"{item['why']}{' (vision)' if item['vision'] else ''}"
+        tonight[key] = tonight.get(key, 0) + 1
+    return {
+        "enabled": bool(settings.get("overnightPanels")),
+        "start": int(settings["overnightPanelsStart"]), "end": int(settings["overnightPanelsEnd"]),
+        "visionPages": int(settings["overnightVisionPages"]),
+        "visionReady": vision_model_ready(),
+        "runs": catalog_store().overnight_runs(7),
+        "tonight": {"comics": len(plan), "bySource": tonight},
+    }
+
+
 @dataclass(frozen=True)
 class WorkerSpec:
     id: str
@@ -18236,6 +18527,10 @@ def worker_specs() -> tuple[WorkerSpec, ...]:
                    "flipparr-auto-scan", AUTO_SCAN_POLL_SECONDS * 3, start_auto_scan_worker, lambda: _AUTO_SCAN_THREAD),
         WorkerSpec("ratings", "Age ratings", "Settles age ratings for runs that have none yet.",
                    "flipparr-ratings", RATING_POLL_SECONDS * 2 + 300, start_ratings_worker, lambda: _RATINGS_THREAD),
+        # A night's read holds the loop for hours; it beats between comics.
+        WorkerSpec("overnight", "Overnight panel read",
+                   "Reads the panels of the comics you are likely to open next, during the hours you set.",
+                   "flipparr-overnight-panels", 3600, start_overnight_panels_worker, lambda: _OVERNIGHT_THREAD),
     )
 
 
@@ -18398,6 +18693,7 @@ def system_status() -> dict[str, Any]:
         "disk": {"config": _disk(store.database_path.parent), "temp": _disk(tempfile.gettempdir())},
         "workers": worker_states(),
         "work": store.background_work_summary(),
+        "overnightPanels": (store.overnight_runs(1) or [None])[0],
         "services": service_troubles(),
         "problems": recent_problems(),
     }
@@ -20460,6 +20756,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/library/duplicates":
             self.send_json({"issues": duplicate_copies()})
+            return
+        if parsed_url.path == "/api/v1/panels/overnight":
+            self.send_json(overnight_panels_status())
             return
         if parsed_url.path == "/api/v1/library/cbz-conversion":
             self.send_json(cbz_conversion_status())
@@ -23080,6 +23379,7 @@ def main() -> None:
     start_release_research_worker()
     start_auto_scan_worker()
     start_ratings_worker()
+    start_overnight_panels_worker()
     start_worker_supervisor()
     temp_dir = serving_temp_dir()
     if temp_dir is not None:
@@ -23102,6 +23402,7 @@ def main() -> None:
     finally:
         _WORKERS_STOPPING.set()  # first, or the supervisor restarts what is stopping
         _ENRICHMENT_STOP.set()
+        _OVERNIGHT_STOP.set()
         _IMPORT_STOP.set()
         log_event("server_stopped")
 

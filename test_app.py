@@ -11756,6 +11756,118 @@ class OneCopyPerIssueTests(_ComicCopiesTestCase):
         app._set_aside_damaged_copies(new, {"issueId": str(issue_id), "replacementId": "3"})  # a replacement: its own swap
 
 
+class OvernightWindowTests(unittest.TestCase):
+    """The overnight panel read's hours, in the server's local time."""
+
+    def test_a_window_inside_one_day_and_one_across_midnight(self):
+        at = lambda hour: dt.datetime(2026, 10, 15, hour, 30)
+        self.assertEqual(app.overnight_window_end(at(3), 0, 6), dt.datetime(2026, 10, 15, 6, 0))
+        self.assertIsNone(app.overnight_window_end(at(7), 0, 6))
+        self.assertEqual(app.overnight_window_end(at(23), 22, 6), dt.datetime(2026, 10, 16, 6, 0))
+        self.assertEqual(app.overnight_window_end(at(5), 22, 6), dt.datetime(2026, 10, 15, 6, 0))
+        self.assertIsNone(app.overnight_window_end(at(12), 22, 6))
+        self.assertIsNone(app.overnight_window_end(at(3), 4, 4), "no window")
+
+    def test_a_night_is_the_date_its_window_opened(self):
+        self.assertEqual(app.overnight_night(dt.datetime(2026, 10, 15, 3, 0), 0), "2026-10-15")
+        self.assertEqual(app.overnight_night(dt.datetime(2026, 10, 15, 3, 0), 22), "2026-10-14")
+        self.assertEqual(app.overnight_night(dt.datetime(2026, 10, 15, 23, 0), 22), "2026-10-15")
+
+    def test_settings_take_only_the_hours_and_limits_offered(self):
+        with tempfile.TemporaryDirectory() as folder, patch("app.settings_config_path", return_value=Path(folder) / "s.json"):
+            for bad in ({"overnightPanelsStart": 24}, {"overnightPanelsEnd": -1}, {"overnightVisionPages": 50},
+                        {"overnightPanelsStart": True}):
+                with self.assertRaises(ValueError):
+                    app.save_app_settings(bad)
+            app.save_app_settings({"overnightPanelsStart": 22, "overnightVisionPages": 300})
+            settings = app.load_app_settings()
+            self.assertEqual((settings["overnightPanelsStart"], settings["overnightVisionPages"], settings["overnightPanels"]),
+                             (22, 300, True))
+
+
+class OvernightPanelTests(_ComicCopiesTestCase):
+    """The night's read: comics likely to be opened next, admins' by vision up
+    to the night's limit, pages already read skipped, the window kept."""
+
+    def setUp(self):
+        super().setUp()
+        self.ids = self._comics({"Example 001.cbz": [(f"{index + 1:02d}.jpg", self._page(index)) for index in range(3)]})
+        self.file_id = self.ids["Example 001.cbz"]
+        self.settings = dict(app._APP_SETTINGS_DEFAULTS, visionReadsEveryPage=True, overnightVisionPages=100)
+        for each in (patch("app.load_app_settings", side_effect=lambda: dict(self.settings)),
+                     patch("app.vision_model_ready", return_value=True),
+                     patch("app._read_page_panels", side_effect=self._read)):
+            each.start()
+            self.addCleanup(each.stop)
+        app._OVERNIGHT_STOP.clear()
+
+    @staticmethod
+    def _read(image, session, vision, every, direction, *rest):
+        if vision:
+            app._OVERNIGHT.vision_pages = getattr(app._OVERNIGHT, "vision_pages", 0) + 1
+        return {"source": "vlm" if vision else "model", "segmented": True,
+                "panels": [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}]}
+
+    def _pass(self, hour=3):
+        clock = lambda: dt.datetime(2026, 10, 15, hour, 0).astimezone()
+        deadline = dt.datetime(2026, 10, 15, 6, 0).astimezone()
+        plan = [{"fileId": self.file_id, "vision": True, "why": "keep reading", "userId": ADMIN_USER_ID}]
+        with patch("app.overnight_panel_plan", return_value=plan):
+            return app.overnight_panel_pass(deadline, now=clock)
+
+    def test_the_plan_puts_an_admins_next_comics_first_and_readers_without_vision(self):
+        reader = self.store.create_user("Reader")["id"]
+        def keep(user_id):
+            return {"items": [{"fileId": "11", "resume": "next"}, {"fileId": "10", "resume": "continue"}]} if user_id == ADMIN_USER_ID \
+                else {"items": [{"fileId": "10", "resume": "continue"}, {"fileId": "30", "resume": "continue"}]}
+        with patch("app.continue_reading", side_effect=lambda user_id: keep(user_id)), \
+                patch.object(self.store, "recent_import_files", return_value=[20]), \
+                patch.object(self.store, "offline_downloads", return_value=[{"fileId": "21"}]), \
+                patch("app._file_visible_to", return_value=True):
+            plan = app.overnight_panel_plan()
+        self.assertEqual([(item["fileId"], item["why"], item["vision"]) for item in plan],
+                         [(10, "keep reading", True), (11, "next issue", True), (20, "new arrival", True),
+                          (21, "on a device", True), (30, "keep reading", False)],
+                         "each comic once, an admin's first; a reader's read by Flipparr itself")
+        self.assertEqual(plan[-1]["userId"], reader)
+
+    def test_the_nights_vision_limit_holds_across_a_restart_and_pages_read_are_skipped(self):
+        self.settings["overnightVisionPages"] = 2
+        first = self._pass()
+        self.assertEqual((first["visionPages"], first["pagesRead"], first["stopped"]), (2, 2, "cap"))
+        again = self._pass()
+        self.assertEqual((again["pagesRead"], again["deferredComics"], again["stopped"]), (0, 1, "cap"),
+                         "a restart does not reset the night's limit")
+        self.settings["overnightVisionPages"] = 100
+        more = self._pass()
+        self.assertEqual((more["skippedSettled"], more["pagesRead"], more["stopped"]), (2, 1, "done"))
+        [latest, *_] = self.store.overnight_runs(5)
+        self.assertEqual((latest["stopped"], latest["visionPages"], latest["detail"]["sources"]), ("done", 1, {"keep reading": 1}))
+
+    def test_a_run_killed_midway_keeps_its_vision_count_and_is_closed_as_interrupted(self):
+        self.settings["overnightVisionPages"] = 2
+        night = app.overnight_night(dt.datetime(2026, 10, 15, 3, 0).astimezone(), 0)
+        killed = self.store.start_overnight_run(night)
+        self.store.finish_overnight_run(killed, stopped=None, comics=1, pagesRead=2, visionPages=2, localPages=0,
+                                        skippedSettled=0, deferredComics=0, failedComics=0)
+        result = self._pass()
+        self.assertEqual((result["visionPages"], result["stopped"]), (0, "cap"), "the checkpoint counts")
+        [_, first] = self.store.overnight_runs(2)
+        self.assertEqual((first["id"], first["stopped"], bool(first["endedAt"])), (killed, "interrupted", True))
+
+    def test_the_window_closing_stops_the_night(self):
+        result = self._pass(hour=6)
+        self.assertEqual((result["pagesRead"], result["stopped"]), (0, "window_end"))
+
+    def test_a_device_holding_the_comic_hears_its_panels_changed(self):
+        held = app._file_signature(self.root / "Example 001.cbz")
+        [before] = app.offline_check([{"fileId": self.file_id, "fileSignature": held}], lambda _id: True)
+        self.assertNotIn("panelsAt", before)
+        self._pass()
+        [after] = app.offline_check([{"fileId": self.file_id, "fileSignature": held}], lambda _id: True)
+        self.assertTrue(after["panelsAt"])
+
+
 class ComicPlaceTests(_ComicCopiesTestCase):
     """docs/READING_STATE_PLAN.md step 2b: where a comic was left is the
     comic's, and opening another copy of it -- a replacement with an ad page

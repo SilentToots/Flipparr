@@ -241,6 +241,14 @@ export class Downloads extends EventTarget {
     const { profileId, fileId, index, kind } = parseTransferId(event.id);
     if (profileId !== this.profileId) return;
     const row = this.row(fileId);
+    if (row && row.state === "ready" && kind === "allPanels" && row.panelsWanted) {
+      await this.store.savePanels(this.profileId, row.fileId, await this.store.takeBulkPanels(this.profileId, row.fileId));
+      row.panelsAt = row.panelsWanted;
+      delete row.panelsWanted;
+      await this.save();
+      this.changed();
+      return;
+    }
     if (!row || row.state !== "downloading") return;
     this.mark(row, kind, index, Number(event.bytes) || 0);
     if (downloadComplete(row)) await this.finish(row);
@@ -274,6 +282,12 @@ export class Downloads extends EventTarget {
     const { profileId, fileId, index, kind } = parseTransferId(event.id);
     if (profileId !== this.profileId || event.cancelled) return;
     const row = this.row(fileId);
+    if (row && row.state === "ready" && kind === "allPanels" && row.panelsWanted) {
+      // Asked again at the next check; the copy's panels stand meanwhile.
+      delete row.panelsWanted;
+      await this.save();
+      return;
+    }
     if (!row || row.state !== "downloading") return;
     if (kind === "package" && event.status === 409) {
       // The comic changed on the server since it was asked for: as it is now.
@@ -317,6 +331,8 @@ export class Downloads extends EventTarget {
       ? await this.store.takeBulkPanels(this.profileId, row.fileId)
       : await this.store.gatherPanelParts(this.profileId, row.fileId, row.pageCount);
     await this.store.savePanels(this.profileId, row.fileId, panels);
+    // Panels the server reads after this are taken again (refreshPanels).
+    row.panelsAt = new Date().toISOString();
     row.state = "ready";
     row.error = null;
     row.downloadedAt = new Date().toISOString();
@@ -430,9 +446,13 @@ export class Downloads extends EventTarget {
       } catch {
         break;
       }
-      for (const { fileId, status, lastReadAt, finished } of answer?.files || []) {
+      for (const { fileId, status, lastReadAt, finished, panelsAt } of answer?.files || []) {
         const row = this.row(fileId);
         if (!row) continue;
+        // Panels read on the server since this copy's -- the overnight read
+        // finds them for comics already here (2026-10-14): taken again, so
+        // offline reading has them too.
+        if (status === "ok" && row.state === "ready" && await this.refreshPanels(row, panelsAt)) changed = true;
         // Where this profile is with it, as the server knows -- read on the
         // web or another device too (the owner, 2026-10-11: finished on one
         // iPad, Unread on the other). Taken only when newer than what this
@@ -456,6 +476,24 @@ export class Downloads extends EventTarget {
     }
     if (changed) await this.save();
     return removed;
+  }
+
+  /**
+   * A downloaded comic's panels again, when the server's are newer than this
+   * copy's (`panelsAt`). One transfer, the comic's bulk panels; panels.json
+   * is replaced when it lands. Comics downloaded page by page (an older
+   * server) keep theirs. Resolves to whether one was asked for.
+   */
+  async refreshPanels(row, panelsAt) {
+    if (!panelsAt || !row.panelsUrl || row.panelsWanted) return false;
+    if (row.panelsAt && Date.parse(panelsAt) <= Date.parse(row.panelsAt)) return false;
+    row.panelsWanted = panelsAt;
+    await this.native.enqueue({
+      id: transferId(this.profileId, row.fileId, null, "allPanels"),
+      url: new URL(row.panelsUrl, this.client.origin).href,
+      path: bulkPanelsPath(this.profileId, row.fileId), headers: this.client.headers(),
+    });
+    return true;
   }
 
   /** A comic replaced on the server, downloaded again as it now is. */

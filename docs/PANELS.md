@@ -11,6 +11,28 @@ owner fixed by hand, build by build, so that a change to the detector is
 judged on the library it serves rather than on drawn fixtures, and so that
 a change that moves nothing is not kept. Written 2026-10-06.
 
+## When a page is read
+
+A page is read the first time someone opens it in panel view (the reader
+asks two pages ahead) and the reading is kept. With the vision connector
+reading every page, that first reading takes a few seconds -- felt at the
+start of a new comic. Since 2026-10-14 an **overnight read** reads ahead
+between the hours set (midnight to 6 am by default): for each profile, admin
+first, Keep Reading's comics, each run's next issue, issues imported in the
+last 7 days, then comics on Flipparr View devices -- only what that profile
+may see. It goes through the same `file_page_panels` path as an opened page,
+in the background lane, and skips pages whose reading is already final. An
+admin's comics go to the vision connector when it reads every page, up to a
+nightly page limit counted from the catalog's run rows so
+a restart does not reset it; once the limit is reached the remaining vision
+comics wait for the next night rather than being read locally, because a
+local reading would be replaced by vision when the page is opened (panels
+must not change mid-read). Readers' comics are read locally unless readers'
+pages may use vision. Each night is a row in `overnight_panel_runs` (pages,
+vision pages, settled pages skipped, why it stopped), shown on Settings ›
+Reader and System. Pages it does not reach are read when opened, as before;
+nothing about the on-demand path changes.
+
 ## The benchmark
 
 `tools/panel_benchmark.py` runs the local tiers over every hand-fixed page

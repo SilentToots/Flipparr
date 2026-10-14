@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 76
+SCHEMA_VERSION = 77
 
 # What is kept with a file's signature, so that a changed file is looked at
 # again -- and carried over when the change is only a CBZ conversion of the
@@ -1630,6 +1630,27 @@ class CatalogStore:
                     resolved_by TEXT NOT NULL,
                     resolved_at TEXT NOT NULL
                 );
+                -- Each night's overnight panel read (schema 77, the owner,
+                -- 2026-10-14): when it ran, what it read, how many pages went
+                -- to the vision connector -- the night's limit is counted from
+                -- here, so a restart does not reset it -- and why it stopped:
+                -- done, window_end, cap, vision_unavailable, stopped, error.
+                CREATE TABLE IF NOT EXISTS overnight_panel_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    night TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    comics INTEGER NOT NULL DEFAULT 0,
+                    pages_read INTEGER NOT NULL DEFAULT 0,
+                    vision_pages INTEGER NOT NULL DEFAULT 0,
+                    local_pages INTEGER NOT NULL DEFAULT 0,
+                    skipped_settled INTEGER NOT NULL DEFAULT 0,
+                    deferred_comics INTEGER NOT NULL DEFAULT 0,
+                    failed_comics INTEGER NOT NULL DEFAULT 0,
+                    stopped TEXT,
+                    detail_json TEXT
+                );
+                CREATE INDEX IF NOT EXISTS overnight_panel_runs_night ON overnight_panel_runs(night);
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_name TEXT NOT NULL,
@@ -5793,6 +5814,74 @@ class CatalogStore:
         return [{"id": int(row["id"]), "path": row["path"],
                  "damaged": ((_load_json(row["result_json"], {}) or {}).get("file_health") or {}).get("status") == "error"}
                 for row in rows]
+
+    def recent_import_files(self, days: int) -> list[int]:
+        """Files Flipparr imported in the last `days` days, newest first, still
+        in the library: the overnight read's new arrivals."""
+        since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=int(days))).isoformat()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT files.id FROM acquisition_downloads d JOIN files ON files.path=d.destination AND files.present=1
+                    WHERE d.status='imported' AND d.imported_at >= ? GROUP BY files.id ORDER BY MAX(d.imported_at) DESC""",
+                (since,),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    def start_overnight_run(self, night: str) -> int:
+        """A run left open by a process that was killed is closed as
+        interrupted; its last checkpoint still counts toward its night."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE overnight_panel_runs SET ended_at=?, stopped='interrupted' WHERE ended_at IS NULL", (_utc_now(),),
+            )
+            return int(connection.execute(
+                "INSERT INTO overnight_panel_runs(night, started_at) VALUES (?, ?)", (night, _utc_now()),
+            ).lastrowid)
+
+    def finish_overnight_run(self, run_id: int, *, stopped: str, comics: int, pagesRead: int, visionPages: int,
+                             localPages: int, skippedSettled: int, deferredComics: int, failedComics: int,
+                             detail: dict[str, Any] | None = None) -> None:
+        """Close the run, or with ``stopped=None`` record how far it has got
+        (after each comic), so a killed process does not lose the night's
+        vision count."""
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE overnight_panel_runs SET ended_at=?, stopped=?, comics=?, pages_read=?, vision_pages=?,
+                       local_pages=?, skipped_settled=?, deferred_comics=?, failed_comics=?, detail_json=? WHERE id=?""",
+                (_utc_now() if stopped else None, stopped, int(comics), int(pagesRead), int(visionPages), int(localPages),
+                 int(skippedSettled), int(deferredComics), int(failedComics), _json(detail or {}), int(run_id)),
+            )
+
+    def overnight_runs(self, limit: int = 7) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM overnight_panel_runs ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+        return [{"id": int(row["id"]), "night": row["night"], "startedAt": row["started_at"], "endedAt": row["ended_at"],
+                 "comics": row["comics"], "pagesRead": row["pages_read"], "visionPages": row["vision_pages"],
+                 "localPages": row["local_pages"], "skippedSettled": row["skipped_settled"],
+                 "deferredComics": row["deferred_comics"], "failedComics": row["failed_comics"],
+                 "stopped": row["stopped"], "detail": _load_json(row["detail_json"], {})} for row in rows]
+
+    def overnight_vision_pages(self, night: str) -> int:
+        """Pages the vision connector read for the overnight read that night."""
+        with self._connect() as connection:
+            return int(connection.execute(
+                "SELECT COALESCE(SUM(vision_pages), 0) FROM overnight_panel_runs WHERE night=?", (night,),
+            ).fetchone()[0])
+
+    def panels_updated_at(self, file_ids: list[int]) -> dict[int, str]:
+        """When each file's panels last changed: a device holding the comic
+        takes its panels again when they are newer than its copy."""
+        ids = [int(value) for value in file_ids]
+        found: dict[int, str] = {}
+        with self._connect() as connection:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                for row in connection.execute(
+                    f"SELECT file_id, MAX(updated_at) AS at FROM page_panels WHERE file_id IN ({','.join('?' * len(chunk))}) "
+                    "GROUP BY file_id", chunk,
+                ):
+                    found[int(row["file_id"])] = row["at"]
+        return found
 
     def converted_from(self, file_id: int, from_signature: str, to_signature: str) -> bool:
         """Whether this file became `to_signature` by a CBZ conversion of

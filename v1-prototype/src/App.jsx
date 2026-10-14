@@ -107,6 +107,7 @@ import { SettingsFrame, SettingsIndex } from "./settings/shell.jsx";
 import { LibraryCbzConversion } from "./settings/cbz-conversion.jsx";
 import { DamagedComics } from "./settings/damaged-comics.jsx";
 import { DuplicateCopies } from "./settings/duplicate-copies.jsx";
+import { OvernightPanels } from "./settings/overnight-panels.jsx";
 import { HeaderContext, PageHeader, SegmentedTabs } from "./frame/header.jsx";
 import { useRefreshOnReturn } from "./refresh-on-return.js";
 import { DEMO_SERIES, LibraryView, catalogPending, logicalCatalogSeries } from "./library/LibraryView.jsx";
@@ -4006,7 +4007,8 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
             <Toggle checked={everyPage} onChange={savingEveryPage ? () => {} : toggleEveryPage} title="Ask about every page" description="On, the model reads every page you open in panel view and its answer replaces what Flipparr found itself, which can be wrong while sure. Off, it is asked only about the pages Flipparr could not read. About half a cent a page with Sonnet." />
             <p className="settings-card-note">Measured on real pages, September 2026: Claude (Sonnet 5) read every layout tried, the hardest to within a few percent. ChatGPT (gpt-4.1-mini) is cheaper and cautious &mdash; it says &ldquo;no panels&rdquo; when unsure and merges panels rather than inventing them. Either way, Flipparr fits a model&rsquo;s boxes to the gutters it finds itself and refuses boxes that cross the art.</p>
           </SettingsCard>
-          <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside></> : null}
+<OvernightPanels />
+                    <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside></> : null}
         </> : null}
         {current === "metadata" ? <>
           <SettingsCard title="Community reading lists">

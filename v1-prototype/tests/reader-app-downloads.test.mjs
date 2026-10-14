@@ -14,6 +14,7 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], c
   answer = manifest, files = {} } = {}) {
   const enqueued = [];
   const posted = [];
+  const checkPanelsAt = { value: null };
   const listeners = {};
   const native = {
     async addListener(name, listener) { listeners[name] = listener; return { remove() {} }; },
@@ -54,7 +55,8 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], c
       }
       if (path === "/api/v1/offline/check") {
         posted.push({ path, body: JSON.parse(options.body) });
-        return { files: JSON.parse(options.body).files.map(({ fileId }) => ({ fileId, status: checkAnswers[fileId] || "ok", ...(checkReading[fileId] || {}) })) };
+        return { files: JSON.parse(options.body).files.map(({ fileId }) => ({ fileId, status: checkAnswers[fileId] || "ok", ...(checkReading[fileId] || {}),
+          ...(checkPanelsAt.value ? { panelsAt: checkPanelsAt.value } : {}) })) };
       }
       posted.push({ path, method: options.method });
       return {};
@@ -62,7 +64,7 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], c
   };
   const downloads = new Downloads({ client, profileId: 3, store, native, idOfDevice: async () => "ios-test" });
   const emit = (name, event) => listeners[name](event);
-  return { downloads, enqueued, posted, saved, emit, unpacked };
+  return { downloads, enqueued, posted, saved, emit, unpacked, setCheckPanelsAt: (value) => { checkPanelsAt.value = value; } };
 }
 
 // The server packs a comic (2026-10-12): one file and one answer of panels.
@@ -239,6 +241,30 @@ test("a packed comic is two transfers: the package, unpacked as it lands, and ev
   assert.equal(saved.bulk, true, "the one answer becomes panels.json");
   assert.equal(saved.panels[1].segmented, true);
   assert.deepEqual(posted.map((item) => item.path), ["/api/v1/offline/downloads"]);
+});
+
+test("a downloaded comic takes its panels again when the server's are newer, and only then", async () => {
+  // The overnight read (2026-10-14) finds panels for comics already here.
+  const { downloads, enqueued, emit, setCheckPanelsAt } = setup({ answer: packaged });
+  await downloads.ready;
+  await downloads.download("63");
+  await emit("transferDone", { id: "3:63:pkg", pages: 2, bytes: 900 });
+  await emit("transferDone", { id: "3:63:panels" });
+  const row = downloads.row("63");
+  assert.equal(row.state, "ready");
+  const kept = row.panelsAt;
+  enqueued.length = 0;
+  setCheckPanelsAt("2000-01-01T00:00:00+00:00");
+  await downloads.check();
+  assert.equal(enqueued.length, 0, "older than this copy's: nothing asked");
+  setCheckPanelsAt("2999-01-01T00:00:00+00:00");
+  await downloads.check();
+  assert.deepEqual(enqueued.map((job) => job.id), ["3:63:panels"]);
+  await emit("transferDone", { id: "3:63:panels" });
+  assert.equal(downloads.row("63").panelsAt, "2999-01-01T00:00:00+00:00");
+  assert.notEqual(kept, downloads.row("63").panelsAt);
+  await downloads.check();
+  assert.equal(enqueued.length, 1, "taken once");
 });
 
 test("a run's comics start a few seconds apart, all handed to iOS at once", async () => {

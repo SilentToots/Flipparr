@@ -153,6 +153,20 @@ You lose manual corrections, aliases and request history — not files.
 
 ## 5. Release notes
 
+### Unreleased
+
+**Schema:** 77 (adds `overnight_panel_runs`). No change on disk.
+
+- *Overnight panel read:* between the hours set (midnight to 6 am by
+  default, local time), the panels of the comics each profile is likely to
+  open next are read ahead -- Keep Reading and each run's next issue, new
+  arrivals, comics on Flipparr View devices -- an admin's by the vision
+  assistant up to a nightly limit (Settings › Reader). Opening a page nothing
+  has read yet still reads it on the spot. Flipparr View takes the new
+  panels for comics already downloaded.
+- Flipparr View: a comic still being packed shows Preparing, not 100%; a
+  run's comics start downloading a few seconds apart.
+
 ### 0.2.0 — Flipparr View, reading that follows the comic, and a library kept whole
 
 **Schema:** 76 (from 64). Upgrading keeps the catalog as it was, as
