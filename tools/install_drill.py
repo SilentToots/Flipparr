@@ -141,14 +141,29 @@ def scan(expected: int) -> bool:
     return settle(lambda: (catalog() or {}).get("stats", {}).get("files") == expected, 180)
 
 
-def filed(config: Path) -> tuple[int | None, list[str]]:
-    """The catalog's schema and its files, read from the database itself."""
-    with sqlite3.connect(f"file:{config / 'flipparr.db'}?mode=ro", uri=True) as connection:
-        try:
-            version = connection.execute("SELECT version FROM schema_info").fetchone()[0]
-        except sqlite3.OperationalError:
-            version = None
-        paths = sorted(row[0] for row in connection.execute("SELECT path FROM files WHERE present=1"))
+_FILED = """
+import json, sqlite3
+connection = sqlite3.connect("file:/config/flipparr.db?mode=ro", uri=True)
+try:
+    version = connection.execute("SELECT version FROM schema_info").fetchone()[0]
+except sqlite3.OperationalError:
+    version = None
+paths = sorted(row[0] for row in connection.execute("SELECT path FROM files WHERE present=1"))
+print(json.dumps([version, paths]))
+"""
+
+
+def filed(config: Path, image: str, user: str) -> tuple[int | None, list[str]]:
+    """The catalog's schema and its files, read from the database itself --
+    with the image's own SQLite, in a throwaway container, never the host's.
+    The catalog is in WAL mode and is read while the container under test is
+    writing it; a host SQLite inside the WAL-reset bug's range (3.7.0-3.51.2,
+    Debian 12's 3.40.1 on the NAS) reading beside a busy writer read
+    "database disk image is malformed" for an upgrade that was sound
+    (0.2.0's drill, 2026-10-14: PRAGMA integrity_check ok under both)."""
+    out = sh("docker", "run", "--rm", "--user", user, "-v", f"{config}:/config", "--entrypoint", "python3",
+             image, "-c", _FILED).stdout
+    version, paths = json.loads(out.strip().splitlines()[-1])
     return version, paths
 
 
@@ -249,7 +264,7 @@ def main() -> int:
         finally:
             logs["previous image"] = old.logs()
             old.stop()
-        before_version, before_files = filed(upgraded)
+        before_version, before_files = filed(upgraded, args.image, user)
         # The backup the docs say to take first.
         with tarfile.open(backup, "w:gz") as archive:
             archive.add(upgraded, arcname=".")
@@ -261,7 +276,7 @@ def main() -> int:
                 return [f"the upgraded install never served: {new.logs()[-600:]}"]
             if catalog() is None:
                 broken.append("the catalog does not answer after the upgrade")
-            after_version, after_files = filed(upgraded)
+            after_version, after_files = filed(upgraded, args.image, user)
             if after_files != before_files:
                 broken.append(f"the files changed: {len(before_files)} before, {len(after_files)} after")
             if after_version is None or (before_version is not None and after_version < before_version):
@@ -297,8 +312,8 @@ def main() -> int:
             broken = []
             if (catalog() or {}).get("stats", {}).get("files") != expected:
                 broken.append(f"the restored catalog shows {(catalog() or {}).get('stats', {}).get('files')} files, not {expected}")
-            _version, files = filed(restored)
-            if files != filed(upgraded)[1]:
+            _version, files = filed(restored, args.image, user)
+            if files != filed(upgraded, args.image, user)[1]:
                 broken.append("the restored library is not the one that was backed up")
             return broken
         finally:

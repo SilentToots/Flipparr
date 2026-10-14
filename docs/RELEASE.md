@@ -155,8 +155,9 @@ You lose manual corrections, aliases and request history — not files.
 
 ### 0.2.0 — Flipparr View, reading that follows the comic, and a library kept whole
 
-**Schema:** 76 (from 64). Upgrading keeps a `flipparr.db.pre-v64` copy beside
-the catalog; rolling back to 0.1.0 means restoring it or a `/config` backup,
+**Schema:** 76 (from 64). Upgrading keeps the catalog as it was, as
+`flipparr.db.pre-v76`, beside it; rolling back to 0.1.0 means restoring that
+copy or a `/config` backup,
 as 0.1.0 refuses a newer catalog. Added: `page_panel_history`,
 `page_vision_answers`, `offline_downloads` (what Flipparr View keeps on each
 device), `cbz_conversions`, `page_fingerprints`, `comic_reading` (a
