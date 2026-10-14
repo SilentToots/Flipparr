@@ -131,7 +131,7 @@ release-ready until its gates pass.
 
 ## Delivery gates
 
-Status as of 2026-10-06: Gates 1–4 passed; `v0.1.0` published as `ghcr.io/silenttoots/flipparr:0.1.0` and running in production.
+Status as of 2026-10-14: Gates 1–4 passed; `v0.2.0` published as `ghcr.io/silenttoots/flipparr:0.2.0` (from `v0.1.0`, 2026-10-06) and running in production, pulled by digest (`sha256:f4fe85da…74a658`). Its install drill (clean, upgrade from 0.1.0, rollback, a newer catalog refused, an unwritable config) holds 5 of 5; the fulfillment drill 12 of 12.
 
 ### Gate 1 — Release foundation
 

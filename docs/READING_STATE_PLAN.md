@@ -15,7 +15,7 @@ written for a file linked to no comic, which has nowhere else to keep one.
 | 4 Covers and backdrops | 588d53a | committed; schema 72 rehearsed on production's database |
 | 5 Merges, rebuilds, re-matches | 00c97a7 | committed |
 | 6 Convert existing CBR to CBZ (opt-in job) | d8b1c9b, see below | committed; not run on the library |
-| 2c Stop writing reading_progress | see below | built 2026-10-14 |
+| 2c Stop writing reading_progress | 798421c | production (0.2.0, 2026-10-14) |
 
 Before the first library run (2026-10-13), the conversion was made a
 non-change: the pages are the same bytes under the same names, so what was
