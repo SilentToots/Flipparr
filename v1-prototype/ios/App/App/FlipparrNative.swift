@@ -240,7 +240,11 @@ extension FlipparrNativePlugin {
         if let unpack = unpack {
             do { _ = try inside(unpack) } catch { call.reject(error.localizedDescription); return }
         }
-        FlipparrDownloads.shared.enqueue(id: id, url: url, relative: relative, headers: headers, unpack: unpack)
+        // A run's comics start a few seconds apart, as the app asks; iOS
+        // holds each until then, with the app asleep or not.
+        let startIn = max(0, min(call.getDouble("startIn") ?? 0, 3600))
+        FlipparrDownloads.shared.enqueue(id: id, url: url, relative: relative, headers: headers, unpack: unpack,
+                                         startIn: startIn)
         call.resolve()
     }
 
@@ -324,10 +328,12 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
     /// many times (the server's ETag and byte ranges make that possible).
     private static let resumesMax = 5
 
-    func enqueue(id: String, url: URL, relative: String, headers: [String: String], unpack: String? = nil) {
+    func enqueue(id: String, url: URL, relative: String, headers: [String: String], unpack: String? = nil,
+                 startIn: Double = 0) {
         var request = URLRequest(url: url)
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let task = session.downloadTask(with: request)
+        if startIn > 0 { task.earliestBeginDate = Date().addingTimeInterval(startIn) }
         describe(task, Job(id: id, path: relative, host: url.host ?? "", unpack: unpack))
         task.resume()
     }

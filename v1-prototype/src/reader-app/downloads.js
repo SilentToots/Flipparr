@@ -24,6 +24,9 @@ export function cancelAllTransfers(native = Native) {
   return native.cancel({ prefix: "" }).catch(() => {});
 }
 
+/** Seconds between the comics of one choice (a run, an arc) starting to download. */
+export const DOWNLOAD_STAGGER_SECONDS = 4;
+
 export class Downloads extends EventTarget {
   constructor({ client, profileId, store = deviceStore, native = Native, idOfDevice = deviceId }) {
     super();
@@ -92,7 +95,7 @@ export class Downloads extends EventTarget {
   }
 
   /** Download a comic. Refused with a readable reason when it cannot fit. */
-  async download(fileId, { groupKey = null } = {}) {
+  async download(fileId, { groupKey = null, startIn = 0 } = {}) {
     await this.ready;
     const existing = this.row(fileId);
     if (existing && (existing.state === "ready" || existing.state === "downloading")) return existing;
@@ -116,7 +119,7 @@ export class Downloads extends EventTarget {
     const row = downloadRow(manifest, { groupKey });
     this.rows = [row, ...this.rows.filter((other) => other.fileId !== row.fileId)];
     await this.save();
-    await this.enqueueMissing(row, manifest.pages || []);
+    await this.enqueueMissing(row, manifest.pages || [], { startIn });
     return row;
   }
 
@@ -129,7 +132,12 @@ export class Downloads extends EventTarget {
     let started = 0;
     for (const fileId of fileIds) {
       try {
-        await this.download(fileId, { groupKey });
+        // Each comic a little after the last, about as fast as the server
+        // packs them: a run asked for at once sent every comic's requests
+        // together and queued the server's other answers behind them
+        // (2026-10-14). All are handed to iOS now, so a locked phone still
+        // downloads the whole run; iOS starts each when its time comes.
+        await this.download(fileId, { groupKey, startIn: started * DOWNLOAD_STAGGER_SECONDS });
         started += 1;
       } catch (error) {
         return { started, error: error.message || "The download could not start" };
@@ -152,8 +160,8 @@ export class Downloads extends EventTarget {
    * device is locked or in another app (the owner, 2026-10-09: the panels
    * were fetched by the page, which iOS pauses with the screen).
    */
-  async enqueueMissing(row, pages, { skip = new Set() } = {}) {
-    if (row.packageUrl) return this.enqueuePackage(row, { skip });
+  async enqueueMissing(row, pages, { skip = new Set(), startIn = 0 } = {}) {
+    if (row.packageUrl) return this.enqueuePackage(row, { skip, startIn });
     const pagesDone = new Set(row.pagesDone);
     const panelsDone = new Set(row.panelsDone || []);
     const headers = this.client.headers();
@@ -162,14 +170,14 @@ export class Downloads extends EventTarget {
       if (!pagesDone.has(page.index) && !skip.has(pageId)) {
         await this.native.enqueue({
           id: pageId, url: new URL(page.readUrl, this.client.origin).href,
-          path: pagePath(this.profileId, row.fileId, page.index), headers,
+          path: pagePath(this.profileId, row.fileId, page.index), headers, startIn,
         });
       }
       const panelsId = transferId(this.profileId, row.fileId, page.index, "panels");
       if (!panelsDone.has(page.index) && !skip.has(panelsId)) {
         await this.native.enqueue({
           id: panelsId, url: new URL(panelsUrl(row.fileId, page.index), this.client.origin).href,
-          path: panelPartPath(this.profileId, row.fileId, page.index), headers,
+          path: panelPartPath(this.profileId, row.fileId, page.index), headers, startIn,
         });
       }
     }
@@ -181,13 +189,13 @@ export class Downloads extends EventTarget {
    * a comic before sending it and says how long that takes; the session asks
    * again then by itself, with the app asleep.
    */
-  async enqueuePackage(row, { skip = new Set() } = {}) {
+  async enqueuePackage(row, { skip = new Set(), startIn = 0 } = {}) {
     const headers = this.client.headers();
     const packageId = transferId(this.profileId, row.fileId, null, "package");
     if ((row.pagesDone?.length || 0) < row.pageCount && !skip.has(packageId)) {
       await this.native.enqueue({
         id: packageId, url: new URL(row.packageUrl, this.client.origin).href,
-        path: packagePath(this.profileId, row.fileId), unpack: comicFolder(this.profileId, row.fileId), headers,
+        path: packagePath(this.profileId, row.fileId), unpack: comicFolder(this.profileId, row.fileId), headers, startIn,
       });
     }
     const panelsId = transferId(this.profileId, row.fileId, null, "allPanels");
@@ -197,7 +205,7 @@ export class Downloads extends EventTarget {
       } else {
         await this.native.enqueue({
           id: panelsId, url: new URL(row.panelsUrl, this.client.origin).href,
-          path: bulkPanelsPath(this.profileId, row.fileId), headers,
+          path: bulkPanelsPath(this.profileId, row.fileId), headers, startIn,
         });
       }
     }

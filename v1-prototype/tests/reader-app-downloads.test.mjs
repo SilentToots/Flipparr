@@ -47,6 +47,11 @@ function setup({ rows = [], onDisk = { pages: [], panels: [] }, inFlight = [], c
     headers: () => ({ Authorization: "Bearer t" }),
     async api(path, options = {}) {
       if (path === "/api/v1/files/63/offline") return answer;
+      const other = path.match(/^\/api\/v1\/files\/(\d+)\/offline$/);
+      if (other && answer.package) {
+        return { ...answer, fileId: other[1], package: { ...answer.package, url: `/api/v1/files/${other[1]}/package?v=sig` },
+                 panelsUrl: `/api/v1/files/${other[1]}/panels?stored=only` };
+      }
       if (path === "/api/v1/offline/check") {
         posted.push({ path, body: JSON.parse(options.body) });
         return { files: JSON.parse(options.body).files.map(({ fileId }) => ({ fileId, status: checkAnswers[fileId] || "ok", ...(checkReading[fileId] || {}) })) };
@@ -234,6 +239,19 @@ test("a packed comic is two transfers: the package, unpacked as it lands, and ev
   assert.equal(saved.bulk, true, "the one answer becomes panels.json");
   assert.equal(saved.panels[1].segmented, true);
   assert.deepEqual(posted.map((item) => item.path), ["/api/v1/offline/downloads"]);
+});
+
+test("a run's comics start a few seconds apart, all handed to iOS at once", async () => {
+  // 2026-10-14: eleven comics' requests together queued the server's other
+  // answers behind them for a moment.
+  const { DOWNLOAD_STAGGER_SECONDS } = await import("../src/reader-app/downloads.js");
+  const { downloads, enqueued } = setup({ answer: packaged });
+  await downloads.ready;
+  const { started } = await downloads.downloadMany(["63", "64", "65"]);
+  assert.equal(started, 3);
+  const startOf = (id) => enqueued.find((job) => job.id === id).startIn;
+  assert.deepEqual(["3:63:pkg", "3:64:pkg", "3:65:pkg"].map(startOf), [0, DOWNLOAD_STAGGER_SECONDS, 2 * DOWNLOAD_STAGGER_SECONDS]);
+  assert.equal(startOf("3:64:panels"), DOWNLOAD_STAGGER_SECONDS, "a comic's panels start with it");
 });
 
 test("a comic still being packed is Preparing, not 100%: the wait's own answer is not the comic", async () => {
