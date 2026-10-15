@@ -52,7 +52,10 @@ JSON) `store.catalog()` builds in 0.6 s, three runs in a row. The time was
 the payload, not the build: the cache and the ETag were stamped with the
 database and WAL files' size and mtime, which every write moves -- a page
 turn's place, a first render's fingerprint, a page's panels -- so the tag
-changed on nearly every poll and the whole 14 MB went again. The stamp is
+changed with every write, and the poll after one carried the whole 14 MB
+again. Over the week's log that was 474 full answers against 8,878 304s:
+most polls were already small, but each 200 was 14 MB, one per page turn
+while someone read, and the 20 s one landed on a loaded server. The stamp is
 now a catalog generation the store counts, moved only by writes to the
 tables the catalog is made from (`CatalogStore.CATALOG_TABLES`; a test
 traces a build and checks every table it read is listed). A page turn keeps
