@@ -7057,7 +7057,7 @@ class PagePanelTests(unittest.TestCase):
 
     def test_a_spread_is_read_as_its_two_pages_in_order(self):
         result, store, render = self._ask(png=self._spread_png())
-        self.assertEqual([call.args for call in render.call_args_list], [(7, 1), (7, 1, "backdrop")])
+        self.assertEqual([call.args[:3] for call in render.call_args_list], [(7, 1, ""), (7, 1, "backdrop")])
         self.assertTrue(result["segmented"])
         self.assertEqual(len(result["panels"]), 6)
         self.assertTrue(all(panel["x"] + panel["w"] <= 0.5 for panel in result["panels"][:3]), "the left page first")
@@ -7118,7 +7118,8 @@ class PagePanelTests(unittest.TestCase):
 
     def test_the_first_look_reads_the_render_and_keeps_what_it_found(self):
         result, store, render = self._ask()
-        render.assert_called_once_with(7, 1)
+        render.assert_called_once()
+        self.assertEqual(render.call_args.args[:3], (7, 1, ""))
         (file_id, member, signature, source, panels, segmented), _ = store.set_page_panels.call_args
         self.assertEqual((file_id, member, signature, source, segmented, len(panels)), (7, "b.jpg", "sig", "auto", True, 3))
         self.assertEqual([panel["id"] for panel in result["panels"]], ["1-0", "1-1", "1-2"])
@@ -10486,12 +10487,20 @@ class CatalogReuseTests(unittest.TestCase):
             paths = {name: Path(folder) / name for name in ("flipparr.db", "settings.json", "providers.json")}
             for path in paths.values():
                 path.write_text("1")
+            store = Mock()
+            store.catalog_generation.return_value = 7
             with patch("app.catalog_database_path", return_value=paths["flipparr.db"]), \
+                    patch("app.catalog_store", return_value=store), \
                     patch("app.settings_config_path", return_value=paths["settings.json"]), \
                     patch("app.provider_config_path", return_value=paths["providers.json"]):
                 before = app._catalog_stamp()
                 self.assertEqual(app._catalog_stamp(), before)
-                Path(str(paths["flipparr.db"]) + "-wal").write_text("a commit")
+                # A commit is not a change to the catalog unless it wrote one of
+                # its tables (the review of 2026-10-14: every page turn moved the
+                # stamp, and every poll after one carried the whole catalog again).
+                Path(str(paths["flipparr.db"]) + "-wal").write_text("a page turn's commit")
+                self.assertEqual(app._catalog_stamp(), before, "the WAL moving is not the catalog moving")
+                store.catalog_generation.return_value = 8
                 after_commit = app._catalog_stamp()
                 paths["settings.json"].write_text("changed!")
                 self.assertEqual(len({before, after_commit, app._catalog_stamp()}), 3)
@@ -12627,3 +12636,35 @@ class LogFileTests(unittest.TestCase):
         self.assertIn("second", console.getvalue())
         self.assertEqual([problem["event"] for problem in app.recent_problems()], ["log_file_stopped"])
 
+
+
+class FirstPanelReadExtractionTests(_ComicCopiesTestCase):
+    """The review of 2026-10-14: a first panel read asked the archive for the
+    same page three or four times (the cut, the hash, the detector's render,
+    a spread's). Once now, and the hash from the store's fingerprint when it
+    already has one."""
+
+    def test_a_first_panel_read_extracts_the_page_once(self):
+        ids = self._comics({"Example 001.cbz": [(f"{index + 1:02d}.jpg", self._page(index)) for index in range(2)]})
+        file_id = ids["Example 001.cbz"]
+        real = app.read_archive_member
+        extractions = []
+        def counted(path, member, *args, **kwargs):
+            extractions.append(member)
+            return real(path, member, *args, **kwargs)
+        with patch("app.read_archive_member", side_effect=counted), patch("app.panel_model_session", return_value=None), \
+                patch("app.vision_model_ready", return_value=False):
+            first = app.file_page_panels(file_id, 1)
+        self.assertEqual(extractions, ["02.jpg"], "the cut, the hash and any further render from one extraction")
+        self.assertIn("segmented", first)
+        path = self.store.library_file_path(file_id)
+        kept = self.store.page_fingerprints(file_id, app._file_signature(path))
+        self.assertIn("02.jpg", kept, "and the page's fingerprint is kept from it")
+        # Asked again for a page already fingerprinted and rendered: nothing is extracted.
+        extractions.clear()
+        with patch("app.read_archive_member", side_effect=counted), patch("app.panel_model_session", return_value=None), \
+                patch("app.vision_model_ready", return_value=False):
+            with sqlite3.connect(self.store.database_path) as connection:
+                connection.execute("DELETE FROM page_panels WHERE file_id=?", (file_id,))
+            app.file_page_panels(file_id, 1)
+        self.assertEqual(extractions, [], "cached renders and a stored fingerprint: the archive is not opened")

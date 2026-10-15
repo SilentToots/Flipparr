@@ -752,6 +752,24 @@ class HttpContractTests(unittest.TestCase):
             changed = self.get("/api/v1/catalog", headers={"If-None-Match": etag})
         self.assertEqual(changed.status, 200)
         self.assertNotEqual(header(changed), etag)
+        # A page turn is not: the catalog is not made of reading (the review
+        # of 2026-10-14: every write moved the tag, and every poll after a
+        # page turn carried 14 MB again). Adding a comic is, and moves it.
+        with tempfile.TemporaryDirectory() as folder:
+            comic = Path(folder) / "turned.cbz"
+            with zipfile.ZipFile(comic, "w") as archive:
+                archive.writestr("0.jpg", _png_bytes())
+                archive.writestr("1.jpg", _png_bytes())
+            # (Written straight into the database, as the fixture does: the
+            # generation watches the store's own connections, the one writer
+            # a running server has, so this row is not a new tag. A write the
+            # store makes to the files table is -- test_catalog_store.)
+            file_id = self._library_file(comic)
+            after_file = self.get("/api/v1/catalog")
+            self.assertEqual(after_file.status, 200)
+            tag = header(after_file)
+            self.assertEqual(self.post(f"/api/v1/files/{file_id}/progress", {"page": 1}).status, 200)
+            self.assertEqual(self.get("/api/v1/catalog", headers={"If-None-Match": tag}).status, 304, "a page turn keeps the tag")
 
     def test_health_reports_the_running_version_and_build(self):
         body = self.get("/healthz").json()
@@ -2646,7 +2664,6 @@ class ReaderProfileHttpTests(unittest.TestCase):
 
     def _library_of_one_run(self):
         """A library with one run of three issues, in the database the server uses."""
-        from catalog_store import CatalogStore
         root = Path(os.environ["COMICARR_DATABASE"]).parent / "library"
         root.mkdir(exist_ok=True)
         parsed = []
@@ -2654,7 +2671,10 @@ class ReaderProfileHttpTests(unittest.TestCase):
             (root / f"Example 00{number}.cbz").write_bytes(b"comic")
             parsed.append(app.ParsedFile(str(root / f"Example 00{number}.cbz"), f"Example 00{number}.cbz", ".cbz",
                                          "Example", issue=number))
-        store = CatalogStore(Path(os.environ["COMICARR_DATABASE"]))
+        # The server's own store, not a second one on the same file: the
+        # catalog's cache is stamped with this instance's generation, which a
+        # second instance's writes would not move (test_catalog_store).
+        store = app.catalog_store()
         store.perform_scan(store.begin_scan(str(root), True), lambda *_: parsed, lambda p: {
             "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {},
             "file_health": {"status": "ok"},
@@ -2837,14 +2857,16 @@ class ReaderProfileHttpTests(unittest.TestCase):
 
     def _two_runs(self):
         """Two runs of one issue each: Example (unrated) and Other."""
-        from catalog_store import CatalogStore
         root = Path(os.environ["COMICARR_DATABASE"]).parent / "two-runs"
         root.mkdir(exist_ok=True)
         parsed = []
         for title in ("Example", "Other"):
             (root / f"{title} 001.cbz").write_bytes(b"comic")
             parsed.append(app.ParsedFile(str(root / f"{title} 001.cbz"), f"{title} 001.cbz", ".cbz", title, issue="1"))
-        store = CatalogStore(Path(os.environ["COMICARR_DATABASE"]))
+        # The server's own store, not a second one on the same file: the
+        # catalog's cache is stamped with this instance's generation, which a
+        # second instance's writes would not move (test_catalog_store).
+        store = app.catalog_store()
         store.perform_scan(store.begin_scan(str(root), True), lambda *_: parsed, lambda p: {
             "parsed": p.__dict__, "lookup_identity": p.__dict__, "embedded_metadata": {}, "file_health": {"status": "ok"},
             "recommendation": {"title": p.series, "issue": p.issue, "record_type": "single_issue",

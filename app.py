@@ -11395,8 +11395,10 @@ def render_file_cover_thumbnail(
     path: Path, member: str, max_dimension: int = COVER_THUMBNAIL_MAX_DIMENSION,
     cache_dir: Path | None = None, budget: int | None = None,
     on_read: Callable[[bytes, bytes], None] | None = None,
+    source: Callable[[], bytes] | None = None,
 ) -> bytes:
-    """Extract and cache a web-sized JPEG without modifying the comic archive."""
+    """Extract and cache a web-sized JPEG without modifying the comic archive.
+    `source` hands over the member's bytes instead of extracting them."""
     if cache_dir is None:
         cache_dir = cover_cache_dir()
         budget = COVER_CACHE_MAX_BYTES if budget is None else budget
@@ -11413,7 +11415,7 @@ def render_file_cover_thumbnail(
     except OSError:
         pass
 
-    source_bytes = read_archive_member(path, member, COVER_SOURCE_MAX_BYTES)
+    source_bytes = source() if source is not None else read_archive_member(path, member, COVER_SOURCE_MAX_BYTES)
     body = normalize_image_to_jpeg(source_bytes, max_dimension)
     _cache_put(cache_dir, cache_key, body, budget)
     if on_read is not None:
@@ -16037,16 +16039,26 @@ def vision_budget_allows(viewer_id: int) -> bool:
         return True
 
 
-def page_hashes(path: Path, member: str, image: Any, *, file_id: int | None = None) -> tuple[str, str]:
+def page_hashes(path: Path, member: str, image: Any, *, file_id: int | None = None,
+                source: Callable[[], bytes] | None = None) -> tuple[str, str]:
     """A page's fingerprint: its bytes hashed, and the difference hash of its
     render -- what a reader's fix is keyed to besides the file it was made
     on, so the fix follows the page to another file or another Flipparr.
-    With `file_id`, kept as the page's fingerprint too (page_fingerprints)."""
-    digest = hashlib.sha256(read_archive_member(path, member)).hexdigest()
+    With `file_id`, the store's fingerprint for this page is used when it
+    holds one for the file as it is now, and kept otherwise
+    (page_fingerprints). `source` hands over the bytes already in hand
+    instead of extracting the member again."""
+    signature = _file_signature(path) if file_id is not None else None
+    if file_id is not None:
+        with contextlib.suppress(Exception):
+            kept = catalog_store().page_fingerprints(file_id, signature).get(member)
+            if kept and kept.get("sha256") and kept.get("dhash"):
+                return str(kept["sha256"]), str(kept["dhash"])
+    digest = hashlib.sha256(source() if source is not None else read_archive_member(path, member)).hexdigest()
     dhash = panel_finder.page_dhash(image)
     if file_id is not None:
         with contextlib.suppress(Exception):
-            catalog_store().record_page_fingerprint(file_id, member, _file_signature(path), digest, dhash)
+            catalog_store().record_page_fingerprint(file_id, member, signature, digest, dhash)
     return digest, dhash
 
 
@@ -16087,6 +16099,41 @@ def ensure_page_fingerprints(file_id: int) -> dict[str, dict[str, Any]]:
                 note_page_fingerprint(file_id, path, member, data, normalize_image_to_jpeg(data, 64))
         known = store.page_fingerprints(file_id, signature)
     return known
+
+
+class _PageRenders:
+    """One page's renders for a panel read, from one extraction of its bytes.
+
+    A first read asked the archive for the same page three or four times --
+    the cut's 600px render, the member again for its hash, the detector's
+    1200px render, a spread's 1800px -- each a separate extraction and
+    decode (the review of 2026-10-14). Here the bytes are read once, each
+    size is rendered from them and cached as render_file_page caches it,
+    and the hash comes from the fingerprint the store already holds when it
+    does. A page's reading-size render on a RAR still goes through
+    render_file_page, which packs the comic for Flipparr View as it goes.
+    """
+
+    def __init__(self, store: Any, file_id: int, path: Path, member: str, index: int, signature: str) -> None:
+        self.store, self.file_id, self.path, self.member, self.index, self.signature = store, file_id, path, member, index, signature
+        self.source: bytes | None = None
+        self.extractions = 0
+
+    def _source(self) -> bytes:
+        if self.source is None:
+            self.source = read_archive_member(self.path, self.member, COVER_SOURCE_MAX_BYTES)
+            self.extractions += 1
+        return self.source
+
+    def bytes(self, size: str = "") -> bytes:
+        """The page at `size`, through render_file_page -- its cache, its
+        fingerprinting, its packing of a RAR -- fed from the one extraction."""
+        return render_file_page(self.file_id, self.index, size, source=self._source)
+
+    def hashes(self, image: Any) -> tuple[str, str]:
+        """The page's fingerprint, through page_hashes: the store's when it
+        holds one for this file as it is now, else from the bytes in hand."""
+        return page_hashes(self.path, self.member, image, file_id=self.file_id, source=self._source)
 
 
 def _reattach_manual_panels(store: Any, file_id: int, member: str, signature: str, page_hash: str,
@@ -16185,12 +16232,14 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
         # A reader's own fixes to this comic go with the question, when a
         # model is asked: the way this artist cuts a page, shown not told.
         examples = vision_examples(file_id, store) if vision else []
-        with Image.open(io.BytesIO(render_file_page(file_id, index))) as image:
+        # One extraction of the page for every render and its hash (_PageRenders).
+        renders = _PageRenders(store, file_id, path, member, index, signature)
+        with Image.open(io.BytesIO(renders.bytes())) as image:
             # The page's fingerprint, before anything is read off it: a fix
             # of this same page made elsewhere -- on the file this one
             # replaced, in an import -- is this page's answer.
             try:
-                hashes = page_hashes(path, member, image, file_id=file_id)
+                hashes = renders.hashes(image)
             except Exception as exc:  # noqa: BLE001 -- a page is read with or without its fingerprint
                 log_exception("page_hash_failed", exc, level="warning")
             if hashes and record is None:
@@ -16229,7 +16278,7 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
                 # The detector reads the 1200px render: it was exported at
                 # 1024px so thin panels survive, and the cut's 600px would
                 # throw that away. Rendered once and cached like any page.
-                detail_bytes = render_file_page(file_id, index, "backdrop")
+                detail_bytes = renders.bytes("backdrop")
                 with Image.open(io.BytesIO(detail_bytes)) as detail:
                     found = _read_page_panels(image, session, vision, every, direction, detail, detail_bytes, examples,
                                               {"fileId": file_id, "member": member})
@@ -16238,11 +16287,11 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
             # the same tiers, from the renders a size up so that a half is
             # a page's size, then joined across the fold and ordered a
             # page at a time.
-            with Image.open(io.BytesIO(render_file_page(file_id, index, "backdrop"))) as cut_image:
+            with Image.open(io.BytesIO(renders.bytes("backdrop"))) as cut_image:
                 halves = panel_finder.spread_halves(cut_image)
             details: list[Any] = [None, None]
             if session is not None or vision:
-                with Image.open(io.BytesIO(render_file_page(file_id, index, "read"))) as read_image:
+                with Image.open(io.BytesIO(renders.bytes("read"))) as read_image:
                     details = panel_finder.spread_halves(read_image)
             readings = [
                 _read_page_panels(half, session, vision, every, direction, detail, None, examples,
@@ -16716,7 +16765,10 @@ def mark_run_reading(series_run_id: int, read: bool, *, user_id: int, at: str | 
     return series_reading(series_run_id, user_id=user_id)
 
 
-def render_file_page(file_id: int, index: int, size: str = "") -> bytes:
+def render_file_page(file_id: int, index: int, size: str = "", *, source: Callable[[], bytes] | None = None) -> bytes:
+    """One page at one size, from the cache or rendered. `source`: the page's
+    bytes already in hand (a panel read renders several sizes of one page),
+    so the archive is not asked again."""
     path = catalog_store().library_file_path(file_id)
     if not path.is_file() or archive_kind(path) is None:
         raise ValueError("Pages can only be read from comic archives")
@@ -16743,7 +16795,8 @@ def render_file_page(file_id: int, index: int, size: str = "") -> bytes:
         path, member, PAGE_SIZES[size],
         cache_dir=reading_cache_dir() if reading else None,
         budget=READING_CACHE_MAX_BYTES if reading else None,
-        on_read=lambda source, body: note_page_fingerprint(file_id, path, member, source, body),
+        on_read=lambda source_bytes, body: note_page_fingerprint(file_id, path, member, source_bytes, body),
+        source=source,
     )
 
 
@@ -19854,9 +19907,15 @@ _CATALOG_BUILD_LOCK = threading.Lock()
 
 def _catalog_stamp() -> tuple[Any, ...]:
     database = catalog_database_path()
+    store = catalog_store()
     # The store too: a catalog built by one store is never another's answer.
-    stamp: list[Any] = [str(database), id(catalog_store())]
-    for path in (database, database.with_name(database.name + "-wal"), settings_config_path(), provider_config_path()):
+    # Its catalog generation moves only on writes to the tables the catalog
+    # is made from (CatalogStore.CATALOG_TABLES). Stamping the database and
+    # WAL files instead moved on every write -- each page turn, each first
+    # render's fingerprint -- and every poll after one carried the whole 14
+    # MB again rather than a 304 (the review of 2026-10-14).
+    stamp: list[Any] = [str(database), id(store), store.catalog_generation()]
+    for path in (settings_config_path(), provider_config_path()):
         try:
             stat = path.stat()
             stamp.append((stat.st_mtime_ns, stat.st_size))

@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+import re
 from unittest.mock import patch
 
 from app import ParsedFile, _metron_reprint_coverage
@@ -6708,3 +6709,48 @@ class PersonalIssueDataTests(_ComicCatalogTestCase):
             self.store._move_personal_issue_data(connection, one, two, only_file=self.a)
         self.assertIsNone(self._comic(one))
         self.assertEqual(self._comic(two)["page"], 3, "the reading follows the file to the issue it really is")
+
+
+class CatalogGenerationTests(LibraryFixture):
+    """The catalog generation (the review of 2026-10-14): what the server's
+    catalog cache and ETag are stamped with. It moves on a write to a table
+    the catalog is made from, and on nothing else -- a page turn's place, a
+    page's fingerprint, its panels -- so a poll after a page turn is a 304,
+    not 14 MB again."""
+
+    def test_every_table_a_catalog_build_reads_is_one_the_generation_watches(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            read: set[str] = set()
+            pattern = re.compile(r"\b(?:FROM|JOIN)\s+[\"`]?([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+            def trace(sql):
+                if re.match(r"\s*(?:SELECT|WITH)", sql, re.IGNORECASE):
+                    read.update(name.lower() for name in pattern.findall(sql))
+            connection = store._connect()
+            connection.set_trace_callback(trace)
+            try:
+                store.catalog("en", rater_id=ADMIN_USER_ID)
+            finally:
+                connection.set_trace_callback(store._note_statement)
+            with sqlite3.connect(store.database_path) as raw:
+                tables = {row[0] for row in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            read -= {"sqlite_master"}
+            self.assertEqual(read - CatalogStore.CATALOG_TABLES, set(),
+                             "a table the catalog reads that no write to it would refresh")
+            self.assertEqual(CatalogStore.CATALOG_TABLES - tables, set(), "a table that does not exist")
+
+    def test_only_a_catalog_write_moves_the_generation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            before = store.catalog_generation()
+            file_id = store.catalog("en")["series"][0]["issues"][0]["fileId"]
+            store.set_reading_progress(int(file_id), 1, 3, "sig", user_id=ADMIN_USER_ID)
+            store.record_page_fingerprint(int(file_id), "01.jpg", "sig", "a" * 64, "b" * 16)
+            store.set_page_panels(int(file_id), "01.jpg", "sig", "auto", [], False)
+            self.assertEqual(store.catalog_generation(), before, "reading, a fingerprint, panels: not the catalog's")
+            store.set_rating("issue", int(store.catalog("en")["series"][0]["issues"][0]["id"]), 4, user_id=ADMIN_USER_ID)
+            self.assertGreater(store.catalog_generation(), before, "a rating shows in the catalog")
+            moved = store.catalog_generation()
+            with store._write_lock, store._connect() as connection:
+                connection.execute("UPDATE files SET updated_at='later' WHERE id=?", (int(file_id),))
+            self.assertGreater(store.catalog_generation(), moved, "a file row is the catalog's")

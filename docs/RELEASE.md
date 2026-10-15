@@ -180,6 +180,14 @@ You lose manual corrections, aliases and request history — not files.
   fetch is packed again with a wait, not a 500; where two merged issues
   both carry a profile's rating or a chosen cover, the newer stands (the
   target's stood whatever its date), and the one let go is said in the log.
+- Performance, from the same review (Tier C): the catalog's cache and ETag
+  are stamped with a catalog generation that moves only on writes to the
+  tables the catalog is made from -- a page turn, a page's fingerprint or
+  panels no longer move it, so a poll after a page turn is a 304 and not the
+  whole 14 MB again (the build itself is 0.6 s on a 2,700-comic library;
+  the payload was the cost); a first panel read extracts a page once, not
+  three or four times, and takes its hash from the fingerprint the store
+  already holds (docs/PERFORMANCE.md).
 - Flipparr View (needs the next TestFlight build): a download making room
   removes another profile's *finished* comic from that profile's own folder,
   leaves them a note shown when they next open the app, and tells the server

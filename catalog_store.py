@@ -820,6 +820,10 @@ class CatalogStore:
 
     def __init__(self, database_path: str | Path):
         self.database_path = Path(database_path)
+        # Before any connection is opened: _connect traces every statement
+        # into the catalog generation.
+        self._generation_lock = threading.Lock()
+        self._catalog_generation = 0
         # The language the library asked for, set by the caller that knows the
         # application settings. Empty means no preference, which trusts every
         # file. A file that states another language still counts as owned and
@@ -849,6 +853,47 @@ class CatalogStore:
                 pass
         self._thread = threading.local()
 
+    # The tables the catalog (`catalog()` and what it calls) is read from. A
+    # write to one of them moves the catalog generation, which is what the
+    # server's catalog cache and ETag are stamped with; a write anywhere else
+    # -- a page turn's place, a page's fingerprint or panels, a notification
+    # -- leaves them be. test_catalog_store traces a catalog build and checks
+    # every table it read is listed here, so a new join cannot go stale. The
+    # generation is this instance's: a running server has one store and is
+    # its database's only writer; a second CatalogStore on the same file (a
+    # test's, a tool's) moves nothing here, so a test writes through
+    # app.catalog_store().
+    CATALOG_TABLES = frozenset({
+        "library_roots", "scan_runs", "files", "file_identities", "file_issue_links", "file_edition_links",
+        "file_metadata_overrides", "file_cover_preferences", "file_creators", "file_replacement_requests",
+        "series_runs", "series_aliases", "series_provider_ids", "series_cover_preferences", "series_run_creators",
+        "series_run_ratings", "series_monitor_refreshes", "series_families", "series_family_memberships",
+        "issues", "issue_provider_ids", "issue_metadata_overrides", "issue_cover_preferences", "issue_ratings",
+        "issue_catalog_status", "editions", "edition_coverage_overrides", "edition_coverage_claims", "creators",
+        "review_resolutions", "story_arcs", "story_arc_run_memberships", "run_collections", "run_collection_items",
+        "acquisition_jobs", "acquisition_requests", "acquisition_request_issues", "acquisition_downloads",
+        "acquisition_download_imports",
+        "metadata_enrichment_jobs", "metadata_provider_state", "users",
+    })
+    _WRITE_TARGET = re.compile(
+        r"^\s*(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+[\"`\[]?([A-Za-z_][A-Za-z0-9_]*)",
+        re.IGNORECASE,
+    )
+
+    def _note_statement(self, sql: str) -> None:
+        """Every statement a connection runs: a write to a catalog table moves
+        the catalog generation. A regex on the statement's head; reads cost a
+        failed match."""
+        found = self._WRITE_TARGET.match(sql)
+        if found and found.group(1).lower() in self.CATALOG_TABLES:
+            with self._generation_lock:
+                self._catalog_generation += 1
+
+    def catalog_generation(self) -> int:
+        """How many writes the catalog's tables have had since this store opened."""
+        with self._generation_lock:
+            return self._catalog_generation
+
     def _connect(self) -> sqlite3.Connection:
         kept = getattr(self._thread, "connection", None)
         if kept is not None:
@@ -864,6 +909,7 @@ class CatalogStore:
             check_same_thread=False,   # closed by close(), from any thread
         )
         connection.row_factory = sqlite3.Row
+        connection.set_trace_callback(self._note_statement)
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
         if getattr(self, "journal_mode", None) is not None:

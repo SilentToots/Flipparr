@@ -45,6 +45,29 @@ catalog and fetch them where they are used (the Pull List, the cover
 editor, the Files tab). That touches many screens and is not a Gate 4
 change.
 
+**2026-10-15, the 304s were not happening.** Production's log for 7–14 Oct
+showed one `GET /api/v1/catalog` of 20.1 s and page renders of 5–20 s; on a
+read-only copy of production's catalog (2,744 comics, 222 runs, 14.3 MB of
+JSON) `store.catalog()` builds in 0.6 s, three runs in a row. The time was
+the payload, not the build: the cache and the ETag were stamped with the
+database and WAL files' size and mtime, which every write moves -- a page
+turn's place, a first render's fingerprint, a page's panels -- so the tag
+changed on nearly every poll and the whole 14 MB went again. The stamp is
+now a catalog generation the store counts, moved only by writes to the
+tables the catalog is made from (`CatalogStore.CATALOG_TABLES`; a test
+traces a build and checks every table it read is listed). A page turn keeps
+the tag; a rating, a scan, an import move it. The remedy above still stands
+for the day the payload itself is too large.
+
+The same log showed a first panel read costing three or four extractions
+and decodes of one page (the 600 px cut, the member again for its hash,
+the detector's 1200 px render, a spread's 1800 px). It is one extraction
+now, every size rendered from it, and the hash is the fingerprint the store
+already holds when it does. The RAR-per-page cost that made those
+extractions slow is gone by another road: 2,730 of the 2,744 comics are
+CBZ after the library conversion; the 12 `.cbr` left are damaged refusals
+waiting on Replace.
+
 ## Smaller things seen
 
 - At start-up the app asks for `/api/v1/reading`, `/reading/runs` and
