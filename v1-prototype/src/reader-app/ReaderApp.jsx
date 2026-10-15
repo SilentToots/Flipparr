@@ -881,12 +881,18 @@ function ConnectScreen({ error: startError, onConnected }) {
   const [address, setAddress] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(startError);
+  const [notice, setNotice] = useState("");
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setNotice("");
     try {
-      const { origin } = await findServer(address);
+      const { origin, unencrypted } = await findServer(address);
+      // Said, not decided in silence: from here the password and token cross
+      // the home network in clear. A slow handshake on a busy NAS was enough
+      // to land here before (the review of 2026-10-14).
+      if (unencrypted) setNotice(`Connected to ${origin} without encryption: nothing answered over https. Type https:// to insist on it.`);
       await onConnected(origin);
     } catch (err) {
       setError(err.message || "Could not connect");
@@ -903,6 +909,7 @@ function ConnectScreen({ error: startError, onConnected }) {
         onChange={(event) => setAddress(event.target.value)} />
     </label>
     {error ? <p className="login-error" role="alert">{error}</p> : null}
+    {notice ? <p className="login-note" role="status">{notice}</p> : null}
     <button className="primary-button login-submit" disabled={busy || !address.trim()} aria-busy={busy}>
       {busy ? <LoadingIndicator size="sm" /> : null} {busy ? "Connecting…" : "Connect"}
     </button>

@@ -60,7 +60,11 @@ export async function findServer(input, fetchImpl = globalThis.fetch, { httpsWai
     if (typed || !error.network) throw error;
     const plain = origin.replace(/^https:/, "http:");
     try {
-      return { origin: plain, answer: await checkServer(plain, fetchImpl) };
+      // Said back to the caller: the address is kept with http, and the
+      // password and token will cross the home network in clear from now
+      // on. The connect screen shows it (ReaderApp), rather than deciding
+      // in silence -- a slow handshake on a busy NAS was enough before.
+      return { origin: plain, answer: await checkServer(plain, fetchImpl), unencrypted: true, httpsTimedOut: Boolean(error.timedOutHttps) };
     } catch (second) {
       throw second.network ? error : second;
     }

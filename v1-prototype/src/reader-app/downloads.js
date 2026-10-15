@@ -115,6 +115,18 @@ export class Downloads extends EventTarget {
 
   /** Download a comic. Refused with a readable reason when it cannot fit. */
   async download(fileId, { groupKey = null, startIn = 0 } = {}) {
+    // Two asks for one comic while its manifest is still on its way (opening
+    // a comic starts its download, and its Download button is tapped too)
+    // are one download, not two rows and two sets of transfers.
+    const id = String(fileId);
+    if (!this.starting) this.starting = new Map();
+    if (this.starting.has(id)) return this.starting.get(id);
+    const started = this.startDownload(id, { groupKey, startIn }).finally(() => this.starting.delete(id));
+    this.starting.set(id, started);
+    return started;
+  }
+
+  async startDownload(fileId, { groupKey = null, startIn = 0 } = {}) {
     await this.ready;
     const existing = this.row(fileId);
     if (existing && (existing.state === "ready" || existing.state === "downloading")) return existing;
@@ -168,9 +180,38 @@ export class Downloads extends EventTarget {
   /** Every finished comic off the device; resolves to how many went. */
   async removeFinished() {
     await this.ready;
-    const finished = this.rows.filter((row) => row.state === "ready" && row.finished).map((row) => row.fileId);
+    const finished = this.rows.filter((row) => row.state === "ready" && row.finished && row.fileId !== this.reading).map((row) => row.fileId);
     for (const fileId of finished) await this.remove(fileId, "removed");
     return finished.length;
+  }
+
+  /**
+   * The comic open in the reader. Nothing removes it while it is open --
+   * making room skips it, and a check's `hidden`/`gone` or a sweep of
+   * finished comics waits for it to close: its pages not yet shown would
+   * break mid-read. What waited is removed the moment it closes.
+   */
+  get reading() { return this._reading ?? null; }
+  set reading(fileId) {
+    const closed = this._reading;
+    this._reading = fileId == null ? null : String(fileId);
+    const row = closed ? this.row(closed) : null;
+    if (row?.removeWhenClosed && this._reading !== closed) {
+      const why = row.removeWhenClosed;
+      delete row.removeWhenClosed;
+      this.remove(closed, why).catch(() => {});
+    }
+  }
+
+  /** Remove now, or once the reader has closed it. */
+  async removeOrDefer(fileId, reason) {
+    if (String(fileId) === this.reading) {
+      const row = this.row(fileId);
+      if (row) { row.removeWhenClosed = reason; await this.save(); }
+      return false;
+    }
+    await this.remove(fileId, reason);
+    return true;
   }
 
   /**
@@ -269,6 +310,12 @@ export class Downloads extends EventTarget {
       return;
     }
     if (!row || row.state !== "downloading") return;
+    // A package unpacked to fewer pages than the comic has is not the comic
+    // (a short read, a half-written zip): failed, not marked whole.
+    if (kind === "package" && event.pages != null && Number(event.pages) !== row.pageCount) {
+      await this.onFailed({ id: event.id, status: 0, incomplete: true });
+      return;
+    }
     this.mark(row, kind, index, Number(event.bytes) || 0);
     if (downloadComplete(row)) await this.finish(row);
     else await this.save();
@@ -326,8 +373,17 @@ export class Downloads extends EventTarget {
       return;
     }
     row.state = "failed";
-    row.error = event.status === 401 ? "Sign in again to finish this download" : "The download stopped. Try again.";
+    row.error = event.status === 401 ? "Sign in again to finish this download"
+      : event.incomplete ? "The comic arrived incomplete. Try again." : "The download stopped. Try again.";
     await this.native.cancel({ prefix: `${this.profileId}:${fileId}:` });
+    // What landed before the failure goes: a failed row holds nothing on
+    // disk and counts for nothing against the limit (offline.js usageBytes),
+    // or a few failed run downloads refused every later download with
+    // "Needs X MB more" that no removal could answer. Try again starts clean.
+    await this.store.removeComic(this.profileId, fileId);
+    row.pagesDone = [];
+    row.panelsDone = [];
+    row.bytes = 0;
     await this.save();
   }
 
@@ -369,10 +425,17 @@ export class Downloads extends EventTarget {
    * server updates a row it has, so a repeat is harmless.
    */
   async noteDownloaded(row) {
-    await this.client.api("/api/v1/offline/downloads", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device: this.device, fileId: row.fileId, fileSignature: row.fileSignature, bytes: row.bytes }),
-    });
+    try {
+      await this.client.api("/api/v1/offline/downloads", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device: this.device, fileId: row.fileId, fileSignature: row.fileSignature, bytes: row.bytes }),
+      });
+    } catch (error) {
+      // Unreachable, or the server's moment: told next time. Refused (a
+      // comic it no longer knows): it will not be accepted later either,
+      // and was asked again on every launch, foreground and reconnect.
+      if (error.network || error.status === 401 || error.status === 403 || error.status >= 500) throw error;
+    }
     row.noted = true;
     await this.save();
   }
@@ -522,8 +585,7 @@ export class Downloads extends EventTarget {
           changed = true;
         }
         if (status === "hidden" || status === "gone") {
-          await this.remove(fileId, status);
-          removed += 1;
+          if (await this.removeOrDefer(fileId, status)) removed += 1;
         } else if (status === "changed" && row.state === "ready") {
           row.state = "stale";
           changed = true;

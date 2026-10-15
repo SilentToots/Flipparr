@@ -124,20 +124,25 @@ export function progressOf(row) {
 /** Room taken: what is on the device, and what a download under way will take. */
 export function usageBytes(rows) {
   return rows.reduce((sum, row) => {
-    if (row.state === "evicted") return sum; // a note left for its profile, holding nothing
+    // A note left for its profile holds nothing; a failed download's pages
+    // were deleted with the failure (downloads.js onFailed) -- counting its
+    // estimate forever refused new downloads with "Needs X MB more" that no
+    // removal could answer.
+    if (row.state === "evicted" || row.state === "failed") return sum;
     return sum + (row.state === "ready" ? row.bytes : Math.max(row.bytes, row.estimate || 0));
   }, 0);
 }
 
 /**
  * What may make way for a new download, first to go first: finished comics
- * only, the one read longest ago first -- never one in progress, queued or
- * downloading, and never the one open in the reader.
+ * only -- ready, or stale (the server's copy changed; the pages here are
+ * still whole and still finished) -- the one read longest ago first; never
+ * one in progress or downloading, and never the one open in the reader.
  */
 export function evictionOrder(rows, { reading = null } = {}) {
   const at = (row) => Date.parse(row.lastReadAt || row.downloadedAt || 0) || 0;
   return rows
-    .filter((row) => row.state === "ready" && row.finished && row.fileId !== String(reading))
+    .filter((row) => (row.state === "ready" || row.state === "stale") && row.finished && row.fileId !== String(reading))
     .sort((a, b) => at(a) - at(b));
 }
 

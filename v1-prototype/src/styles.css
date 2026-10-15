@@ -2515,6 +2515,8 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .copy-field button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .copy-field button.copied { color: var(--green-text); }
 .login-error { display: flex; align-items: flex-start; gap: var(--space-8); margin: 0; padding: var(--space-12) var(--space-14); border: 1px solid var(--red-border); border-radius: var(--radius-4); background: var(--red-soft); color: var(--red-text); font-size: var(--text-sm); line-height: var(--leading-normal); }
+/* Flipparr View's connect screen, when it fell back to http: said, not decided in silence. */
+.login-note { margin: 0; padding: var(--space-12) var(--space-14); border: 1px solid var(--amber-border); border-radius: var(--radius-4); background: var(--amber-soft); color: var(--amber-text); font-size: var(--text-sm); line-height: var(--leading-normal); }
 .auth-credentials { display: flex; flex-direction: column; gap: var(--space-12); margin-top: var(--space-14); }
 .auth-credentials button { align-self: flex-start; }
 .auth-saved { color: var(--green, var(--green-text)); }

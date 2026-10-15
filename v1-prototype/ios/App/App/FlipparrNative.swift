@@ -158,7 +158,7 @@ extension FlipparrNativePlugin {
         for (name, value) in call.getObject("headers") ?? [:] {
             if let text = value as? String { request.setValue(text, forHTTPHeaderField: name) }
         }
-        URLSession.shared.downloadTask(with: request) { temporary, response, error in
+        let task = URLSession.shared.downloadTask(with: request) { temporary, response, error in
             if let error = error {
                 call.reject(error.localizedDescription, "network")
                 return
@@ -182,7 +182,12 @@ extension FlipparrNativePlugin {
             } catch {
                 call.reject("The file could not be kept: \(error.localizedDescription)")
             }
-        }.resume()
+        }
+        // The shared session has no delegate, so a redirect would have carried
+        // the token to wherever it pointed; this one follows it as the
+        // background session does, token only to the same host and scheme.
+        task.delegate = RedirectGuard(host: url.host, scheme: url.scheme)
+        task.resume()
     }
 
     /// Delete the least recently used files in `path` (relative) until it
@@ -305,6 +310,10 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
         configuration.sessionSendsLaunchEvents = true
         // Downloaded because someone asked: not left for when iOS thinks best.
         configuration.isDiscretionary = false
+        // A few at a time to the one server a household has. iOS's default
+        // let a run's pages go out all at once; with page-by-page downloads
+        // on 2026-10-12 that filled every thread the server had.
+        configuration.httpMaximumConnectionsPerHost = 4
         return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }()
 
@@ -315,6 +324,8 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
         let id: String
         let path: String
         let host: String
+        // Optional: jobs kept by builds from before it carried no scheme.
+        var scheme: String? = nil
         var unpack: String? = nil
         var waits: Int? = nil
         var resumes: Int? = nil
@@ -334,7 +345,7 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let task = session.downloadTask(with: request)
         if startIn > 0 { task.earliestBeginDate = Date().addingTimeInterval(startIn) }
-        describe(task, Job(id: id, path: relative, host: url.host ?? "", unpack: unpack))
+        describe(task, Job(id: id, path: relative, host: url.host ?? "", scheme: url.scheme, unpack: unpack))
         task.resume()
     }
 
@@ -465,16 +476,24 @@ final class FlipparrDownloads: NSObject, URLSessionDownloadDelegate {
         }
     }
 
-    /// The token goes only to the household's server: a redirect to any
-    /// other host is followed without it.
+    /// The token goes only to the household's server, over the scheme it
+    /// was reached by: a redirect to any other host, or from https down to
+    /// http on the same one, is followed without it.
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(FlipparrDownloads.stripped(request, unless: job(task).map { ($0.host, $0.scheme) }))
+    }
+
+    /// The redirected request, its token kept only when host and scheme are
+    /// the original's.
+    static func stripped(_ request: URLRequest, unless original: (host: String?, scheme: String?)?) -> URLRequest {
         var next = request
-        if let job = job(task), request.url?.host != job.host {
+        let same = original.map { request.url?.host == $0.host && request.url?.scheme == $0.scheme } ?? false
+        if !same {
             next.setValue(nil, forHTTPHeaderField: "Authorization")
             next.setValue(nil, forHTTPHeaderField: "Flipparr-Device")
         }
-        completionHandler(next)
+        return next
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
@@ -612,5 +631,23 @@ class FlipparrViewController: CAPBridgeViewController, UIGestureRecognizerDelega
         default:
             break
         }
+    }
+}
+
+/// A one-off fetch's redirects (fetchToFile): followed, the token kept only
+/// when host and scheme are the original's -- the same rule as the background
+/// session's. iOS 15 lets a task carry its own delegate.
+final class RedirectGuard: NSObject, URLSessionTaskDelegate {
+    let host: String?
+    let scheme: String?
+
+    init(host: String?, scheme: String?) {
+        self.host = host
+        self.scheme = scheme
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(FlipparrDownloads.stripped(request, unless: (host, scheme)))
     }
 }

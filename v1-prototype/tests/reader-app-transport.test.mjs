@@ -11,6 +11,7 @@ function setup({ reachable = true } = {}) {
     progress: { fileId: "63", page: 5, panel: 0, pageCount: 3, finishedAt: null, updatedAt: "2026-10-08T10:00:00Z" },
     async api(path, options = {}) {
       sent.push({ path, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+      server.lastSignal = options.signal || null;
       if (!server.reachable) throw Object.assign(new Error("Flipparr could not be reached"), { network: true });
       if (path === "/api/v1/catalog") return { series: [{ id: "61" }] };
       if (path === "/api/v1/files/63/progress" && !options.method) return server.progress;
@@ -374,4 +375,11 @@ test("offline, an issue marked read shows on its run's card from the details kep
   await transport.transport("/api/v1/files/63/progress", save({ read: true }));
   const { runs } = await transport.transport("/api/v1/reading/runs");
   assert.deepEqual([runs["61"].read, runs["61"].total, runs["61"].state], [1, 2, "next"]);
+});
+
+test("one is-it-there check at a time, and a request given up on is cancelled", async () => {
+  const { transport, server, sent } = setup();
+  await Promise.all([transport.probe(), transport.probe(), transport.probe()]);
+  assert.equal(sent.filter((item) => item.path === "/api/v1/app").length, 1, "three probes, one check");
+  assert.ok(server.lastSignal, "the request carries a signal the timeout aborts");
 });

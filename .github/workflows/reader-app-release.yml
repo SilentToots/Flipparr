@@ -42,10 +42,24 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      # Only this repository's own branches and tags ship. The input took any
+      # ref, a fork's pull request included (refs/pull/N/head), whose npm ci
+      # and release script would then have run beside the key (the review of
+      # 2026-10-14).
+      - name: Only our own refs
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          case "$REF" in
+            v1-forward|main|v[0-9]*.[0-9]*.[0-9]*|refs/heads/v1-forward|refs/heads/main|refs/tags/v[0-9]*) echo "shipping $REF" ;;
+            *) echo "::error::Refusing to release '$REF': only v1-forward, main or a version tag ships."; exit 1 ;;
+          esac
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
-      - uses: actions/setup-node@v7
+          # The token is not left in .git for the steps that follow.
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
           cache: npm

@@ -94,3 +94,16 @@ test("an https try that hangs counts as nothing answering, and http is tried", a
   const found = await findServer("localhost:8804", hangsOnHttps, { httpsWait: 10 });
   assert.equal(found.origin, "http://localhost:8804");
 });
+
+test("a fall to http says so, so the screen can", async () => {
+  const flipparr = { ok: true, json: async () => ({ name: "Flipparr", apiVersion: 1 }) };
+  const homeOnly = async (url) => {
+    if (url.startsWith("https:")) throw new TypeError("refused");
+    return flipparr;
+  };
+  const found = await findServer("192.168.1.20:8787", homeOnly);
+  assert.equal(found.origin, "http://192.168.1.20:8787");
+  assert.equal(found.unencrypted, true);
+  const secure = async () => flipparr;
+  assert.equal((await findServer("nas.example", secure)).unencrypted, undefined, "https answered: nothing to say");
+});

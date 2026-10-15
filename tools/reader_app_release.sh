@@ -41,12 +41,14 @@ fi
 [ -n "$team" ] || { echo "Set DEVELOPMENT_TEAM, or put it in ios/Signing.local.xcconfig." >&2; exit 2; }
 
 # What ships is a commit: the app's About names it (__VIEW_BUILD__).
-if [ -n "$(git -C "$here" status --porcelain -- v1-prototype/src v1-prototype/reader-app v1-prototype/ios/App/App)" ]; then
+if [ -n "$(git -C "$here" status --porcelain -- v1-prototype/src v1-prototype/reader-app v1-prototype/ios/App/App v1-prototype/ios/App/App.xcodeproj v1-prototype/package.json v1-prototype/package-lock.json v1-prototype/vite.reader-app.config.mjs v1-prototype/capacitor.config.json v1-prototype/public)" ]; then
   echo "v1-prototype has uncommitted changes; commit them first so the build names what it is." >&2
   exit 1
 fi
 
-stamp=$(date -u +%Y%m%d%H%M)
+# To the second: a local run and a CI run in the same minute collided on
+# the build number (the concurrency group covers CI alone).
+stamp=$(date -u +%Y%m%d%H%M%S)
 out="${FLIPPARR_RELEASE_OUT:-$HOME/flipparr-view-releases/$stamp}"
 mkdir -p "$out"
 

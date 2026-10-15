@@ -83,12 +83,23 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
     if (online) replay();
   }
 
-  /** A request to the server, given up on after `timeoutMs` (or the request's own). */
+  /**
+   * A request to the server, given up on after `timeoutMs` (or the
+   * request's own) -- and cancelled, not left running: with the server's
+   * threads full, abandoned requests piled up behind the very check that
+   * asks whether it is still there (the review of 2026-10-14).
+   */
   function send(path, { timeoutMs: wait = timeoutMs, ...options } = {}) {
     let timer;
     const started = Date.now();
-    const late = new Promise((_, reject) => { timer = setTimer(() => reject(unreachable(new Error(`timed out after ${wait} ms`), true)), wait); });
-    return Promise.race([client.api(path, options), late])
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const late = new Promise((_, reject) => {
+      timer = setTimer(() => {
+        controller?.abort();
+        reject(unreachable(new Error(`timed out after ${wait} ms`), true));
+      }, wait);
+    });
+    return Promise.race([client.api(path, controller ? { ...options, signal: controller.signal } : options), late])
       .catch((error) => {
         // Why the app thinks it is offline, in the device's console: the
         // path only, never a token or a body.
@@ -98,14 +109,18 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       .finally(() => clearTimer(timer));
   }
 
-  /** Whether the server answers its one public route, without saying so to anyone. */
-  async function reachable() {
-    try {
-      await send("/api/v1/app", { headers: {}, timeoutMs: CHECK_TIMEOUT_MS });
-      return true;
-    } catch {
-      return false;
-    }
+  /**
+   * Whether the server answers its one public route, without saying so to
+   * anyone. One check at a time: every timed-out request asked its own,
+   * and a busy server met five checks where one would do.
+   */
+  let checking = null;
+  function reachable() {
+    if (checking) return checking;
+    checking = send("/api/v1/app", { headers: {}, timeoutMs: CHECK_TIMEOUT_MS })
+      .then(() => true, () => false)
+      .finally(() => { checking = null; });
+    return checking;
   }
 
   /**

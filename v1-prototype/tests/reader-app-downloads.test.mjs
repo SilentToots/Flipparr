@@ -401,3 +401,61 @@ test("after a launch, a package left whole is unpacked, a panels answer on disk 
   await lost.downloads.ready;
   assert.deepEqual(lost.enqueued.map((job) => job.id), ["3:63:pkg", "3:63:panels"], "neither here nor in flight: asked again");
 });
+
+test("a failed download leaves nothing on disk, and a short package is a failure", async () => {
+  const rows = [{ fileId: "63", state: "downloading", pageCount: 2, pageUrls: ["/p0", "/p1"], pagesDone: [0], bytes: 500, estimate: 1000 }];
+  const { downloads, saved, emit } = setup({ rows, answer: packaged });
+  await downloads.ready;
+  await emit("transferDone", { id: "3:63:pkg", pages: 1, bytes: 400 });
+  const row = downloads.row("63");
+  assert.equal(row.state, "failed");
+  assert.match(row.error, /incomplete/);
+  assert.deepEqual([row.bytes, row.pagesDone], [0, []], "counts for nothing");
+  assert.deepEqual(saved.removed, ["63"], "the pages that landed are gone");
+});
+
+test("two asks for one comic while its manifest is on its way are one download", async () => {
+  const { downloads, enqueued } = setup();
+  await downloads.ready;
+  const [one, two] = await Promise.all([downloads.download("63"), downloads.download("63")]);
+  assert.equal(one, two);
+  assert.equal(downloads.rows.filter((row) => row.fileId === "63").length, 1);
+  assert.equal(enqueued.filter((job) => job.id === "3:63:0").length, 1, "each page handed over once");
+});
+
+test("the comic open in the reader is not removed under it; it goes when the reader closes", async () => {
+  const rows = [
+    { fileId: "63", state: "ready", finished: true, fileSignature: "sig", pageUrls: [] },
+    { fileId: "64", state: "ready", finished: true, fileSignature: "sig", pageUrls: [] },
+  ];
+  const { downloads, saved } = setup({ rows, checkAnswers: { 63: "hidden" } });
+  await downloads.ready;
+  downloads.reading = "63";
+  assert.equal(await downloads.removeFinished(), 1, "the other finished comic goes");
+  assert.deepEqual(saved.removed, ["64"]);
+  assert.equal(await downloads.check(), 0, "hidden, but open: it waits");
+  assert.equal(downloads.row("63").removeWhenClosed, "hidden");
+  downloads.reading = null;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(saved.removed, ["64", "63"], "gone the moment the reader closed");
+});
+
+test("a note the server refuses is not asked again on every launch", async () => {
+  const rows = [{ fileId: "63", state: "ready", noted: false, fileSignature: "sig", bytes: 10, pageUrls: [] }];
+  const { downloads } = setup({ rows });
+  await downloads.ready;
+  const api = downloads.client.api;
+  downloads.client.api = async (path, options) => {
+    if (path === "/api/v1/offline/downloads") throw Object.assign(new Error("gone"), { status: 404 });
+    return api(path, options);
+  };
+  await downloads.flushRemovals();
+  assert.equal(downloads.row("63").noted, true, "told once; a refusal is not a reason to try again");
+  downloads.row("63").noted = false;
+  downloads.client.api = async (path, options) => {
+    if (path === "/api/v1/offline/downloads") throw Object.assign(new Error("busy"), { status: 503 });
+    return api(path, options);
+  };
+  await downloads.flushRemovals();
+  assert.equal(downloads.row("63").noted, false, "a busy server: told next time");
+});

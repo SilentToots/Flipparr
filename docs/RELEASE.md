@@ -189,7 +189,20 @@ You lose manual corrections, aliases and request history — not files.
   refusal -- a 502 during a redeploy threw a flight's reading away; a profile
   switch holds the leaving profile's engine and queue until the next profile
   is attached, so nothing goes out under the wrong token; signing out
-  removes the profile's kept session from the device on every path.
+  removes the profile's kept session from the device on every path. Also
+  (Tier B): a failed download leaves nothing on disk and counts for nothing
+  against the limit (failed rows held their estimate forever); a finished
+  comic whose server copy changed may make way; the comic open in the
+  reader is never removed under it -- a check's "hidden" or "Remove finished"
+  waits for it to close; two taps for one comic are one download; a
+  package that unpacks short is a failure, not a whole comic; a note the
+  server refuses is not asked again every launch; a request given up on is
+  cancelled and one is-it-there check runs at a time; the background session
+  opens four connections to the server at most; a redirect keeps the token
+  only on the same host and scheme, for one-off fetches too; falling back to
+  http is said on the connect screen. The release workflow ships only this
+  repository's own branches and tags, keeps no checkout token, and the build
+  number is to the second.
 
 - Fixes from the review of the week's deployments (docs/REVIEW_2026-10-14_PLAN.md,
   Tier A): a replacement converted to CBZ that failed after its swap is

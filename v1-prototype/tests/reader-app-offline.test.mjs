@@ -206,3 +206,17 @@ test("a packed comic says Preparing while the server packs it, then its percenta
   row.received = 1000;
   assert.equal(downloadingWords(row), "Downloading 49%");
 });
+
+test("a failed download counts for nothing, and a finished stale comic may make way", () => {
+  // Failed rows held their estimate forever: a few failed run downloads
+  // refused every later download with "Needs X MB more" that no removal
+  // could answer (the review of 2026-10-14).
+  const rows = [
+    { fileId: "a", state: "failed", bytes: 0, estimate: 50 * 1024 * 1024 },
+    { fileId: "b", state: "ready", finished: true, bytes: 10 * 1024 * 1024, lastReadAt: "2026-10-02T00:00:00Z" },
+    { fileId: "c", state: "stale", finished: true, bytes: 10 * 1024 * 1024, lastReadAt: "2026-10-01T00:00:00Z" },
+    { fileId: "d", state: "stale", finished: false, bytes: 10 * 1024 * 1024 },
+  ];
+  assert.equal(usageBytes(rows), 30 * 1024 * 1024);
+  assert.deepEqual(evictionOrder(rows).map((row) => row.fileId), ["c", "b"], "stale but finished goes first, being older; unfinished never");
+});
