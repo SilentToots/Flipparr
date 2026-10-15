@@ -64,7 +64,7 @@ export async function findServer(input, fetchImpl = globalThis.fetch, { httpsWai
       // password and token will cross the home network in clear from now
       // on. The connect screen shows it (ReaderApp), rather than deciding
       // in silence -- a slow handshake on a busy NAS was enough before.
-      return { origin: plain, answer: await checkServer(plain, fetchImpl), unencrypted: true, httpsTimedOut: Boolean(error.timedOutHttps) };
+      return { origin: plain, answer: await checkServer(plain, fetchImpl), unencrypted: true };
     } catch (second) {
       throw second.network ? error : second;
     }

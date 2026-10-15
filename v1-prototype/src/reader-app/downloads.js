@@ -180,9 +180,11 @@ export class Downloads extends EventTarget {
   /** Every finished comic off the device; resolves to how many went. */
   async removeFinished() {
     await this.ready;
-    const finished = this.rows.filter((row) => row.state === "ready" && row.finished && row.fileId !== this.reading).map((row) => row.fileId);
-    for (const fileId of finished) await this.remove(fileId, "removed");
-    return finished.length;
+    const finished = this.rows.filter((row) => row.state === "ready" && row.finished).map((row) => row.fileId);
+    // The one open in the reader goes when it closes (removeOrDefer).
+    let removed = 0;
+    for (const fileId of finished) if (await this.removeOrDefer(fileId, "removed")) removed += 1;
+    return removed;
   }
 
   /**

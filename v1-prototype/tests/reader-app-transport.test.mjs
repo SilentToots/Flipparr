@@ -34,11 +34,15 @@ function setup({ reachable = true } = {}) {
     async saveChangeQueue(id, queue) { files[`c${id}`] = queue; },
   };
   const removed = [];
+  const deferred = [];
   const read = [];
   const downloads = {
     row: (id) => (String(id) === "63" ? { fileId: "63", state: "ready", pageCount: 3, pageUrls: ["/p0", "/p1", "/p2"] } : null),
     async noteRead(id, detail) { read.push([id, detail.finished]); },
     async remove(id, reason) { removed.push([id, reason]); },
+    // As the engine's: removed now, or noted to go when the reader closes it.
+    reading: null,
+    async removeOrDefer(id, reason) { if (String(id) === this.reading) { deferred.push([id, reason]); return false; } removed.push([id, reason]); return true; },
   };
   let clock = 0;
   const transport = createAppTransport({
@@ -46,7 +50,7 @@ function setup({ reachable = true } = {}) {
     setTimer: () => 0, clearTimer: () => {},
   });
   transport.attach("2", downloads);
-  return { server, store, files, sent, removed, read, transport };
+  return { server, store, files, sent, removed, deferred, downloads, read, transport };
 }
 
 const save = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -382,4 +386,16 @@ test("one is-it-there check at a time, and a request given up on is cancelled", 
   await Promise.all([transport.probe(), transport.probe(), transport.probe()]);
   assert.equal(sent.filter((item) => item.path === "/api/v1/app").length, 1, "three probes, one check");
   assert.ok(server.lastSignal, "the request carries a signal the timeout aborts");
+});
+
+test("a 404 on the open comic's save waits for the reader to close before its download goes", async () => {
+  const { transport, server, removed, deferred, downloads } = setup();
+  server.api = (async (path, options = {}) => {
+    if (path === "/api/v1/files/63/progress" && options.method) throw Object.assign(new Error("gone"), { status: 404 });
+    return { ok: true };
+  });
+  downloads.reading = "63";
+  await transport.transport("/api/v1/files/63/progress", save({ page: 1 })).catch(() => {});
+  assert.deepEqual(deferred, [["63", "hidden"]], "open: it waits");
+  assert.deepEqual(removed, []);
 });

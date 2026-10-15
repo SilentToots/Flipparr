@@ -314,7 +314,8 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
       }
       // Refused: it will not be accepted later either.
       await withQueue((queue) => queueDrop(queue, fileId, at));
-      if (error.status === 404) downloads?.remove(fileId, "hidden").catch(() => {});
+      // Gone from the server: its download goes -- once the reader has closed it, if it is the one open.
+      if (error.status === 404) (downloads?.removeOrDefer ?? downloads?.remove)?.call(downloads, fileId, "hidden").catch(() => {});
       throw error;
     }
   }
@@ -386,7 +387,7 @@ export function createAppTransport({ client, store, onLost = () => {}, now = () 
           if (sendableLater(error)) return; // the server's moment: the rest wait with it
           // Gone or refused: not sendable later either.
           await withQueue((queue) => queueDrop(queue, row.fileId, row.at));
-          if (error.status === 404) downloads?.remove(row.fileId, "hidden").catch(() => {});
+          if (error.status === 404) (downloads?.removeOrDefer ?? downloads?.remove)?.call(downloads, row.fileId, "hidden").catch(() => {});
         }
       }
       // Then the ratings, marks and reading-list entries, oldest first.

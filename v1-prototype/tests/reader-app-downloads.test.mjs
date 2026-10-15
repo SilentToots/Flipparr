@@ -431,10 +431,11 @@ test("the comic open in the reader is not removed under it; it goes when the rea
   const { downloads, saved } = setup({ rows, checkAnswers: { 63: "hidden" } });
   await downloads.ready;
   downloads.reading = "63";
-  assert.equal(await downloads.removeFinished(), 1, "the other finished comic goes");
+  assert.equal(await downloads.removeFinished(), 1, "the other finished comic goes; the open one waits");
   assert.deepEqual(saved.removed, ["64"]);
+  assert.equal(downloads.row("63").removeWhenClosed, "removed");
   assert.equal(await downloads.check(), 0, "hidden, but open: it waits");
-  assert.equal(downloads.row("63").removeWhenClosed, "hidden");
+  assert.equal(downloads.row("63").removeWhenClosed, "hidden", "the later reason stands");
   downloads.reading = null;
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(saved.removed, ["64", "63"], "gone the moment the reader closed");
