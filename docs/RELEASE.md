@@ -163,6 +163,16 @@ You lose manual corrections, aliases and request history — not files.
   valid in a signed-out device's Keychain for its 30 days. The profile's other
   sign-ins -- a phone's, the web's -- stand; "sign out everywhere" is still
   the admin's.
+- Web, from the same review (Tier B): Read next from the finish drawer no
+  longer leaves the first comic behind in history (Back reopened it); coming
+  back to the tab keeps a run's or an arc's drawer filled while it refetches,
+  and keeps it when the server is away; an older catalog answer can no longer
+  land over a newer one; the reader clears the last comic's failed pages and
+  spreads when the next opens, fits a zoomed spread the same way on
+  rotation, and a pinch cut off by a re-render no longer leaves swipes off;
+  a drawn panel keeps its last sliver of movement; "Convert to CBZ" asks
+  once more when originals will be deleted, and "Replace all damaged" asks
+  before queuing every replacement.
 - Flipparr View (needs the next TestFlight build): a download making room
   removes another profile's *finished* comic from that profile's own folder,
   leaves them a note shown when they next open the app, and tells the server

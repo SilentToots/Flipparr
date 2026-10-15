@@ -12,6 +12,9 @@ import { LoadingSpinner } from "../components/glass.jsx";
 export function LibraryCbzConversion() {
   const [status, setStatus] = useState(null);
   const [keepOriginals, setKeepOriginals] = useState(true);
+  // With the originals not kept, the start asks once more: one tap would
+  // otherwise delete every CBR in the library, with no undo.
+  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = useCallback(() => apiRequest("/api/v1/library/cbz-conversion").then(setStatus, () => {}), []);
@@ -33,7 +36,12 @@ export function LibraryCbzConversion() {
       setError(failure.message || "That did not work");
     } finally {
       setBusy(false);
+      setConfirming(false);
     }
+  }
+  function start() {
+    if (!keepOriginals && !confirming) { setConfirming(true); return; }
+    act("start");
   }
   if (!status || (!status.candidates && !status.running && !status.finishedAt)) return null;
   const finished = status.done + status.kept + status.failed;
@@ -47,14 +55,20 @@ export function LibraryCbzConversion() {
       Last run: {status.done} converted, {status.kept} left as they are{status.failed ? `, ${status.failed} failed` : ""}.
       {status.lastError ? ` ${status.lastError}.` : status.lastKept ? ` ${status.lastKept}.` : ""}
     </p> : null}
-    {!status.running && status.candidates ? <Toggle checked={keepOriginals} onChange={setKeepOriginals} title="Keep the originals"
+    {!status.running && status.candidates ? <Toggle checked={keepOriginals} onChange={(next) => { setKeepOriginals(next); setConfirming(false); }} title="Keep the originals"
       description="Each original CBR is moved to .flipparr/converted in its library folder, where you can delete it once you are happy. Off, it is deleted once its CBZ is checked." /> : null}
     {error ? <p className="workbench-error" role="alert">{error}</p> : null}
     <div className="settings-card-actions">
       {status.running
         ? <button type="button" className="secondary-button" onClick={() => act("stop")} disabled={busy}><Stop size={18} /> Stop after this comic</button>
-        : status.candidates ? <button type="button" className="primary-button" onClick={() => act("start")} disabled={busy} aria-busy={busy}>
-          {busy ? <LoadingSpinner size={18} /> : <ArrowsClockwise size={18} />} Convert {status.candidates} to CBZ</button> : null}
+        : status.candidates ? <>
+          <button type="button" className="primary-button" onClick={start} disabled={busy} aria-busy={busy}>
+            {busy ? <LoadingSpinner size={18} /> : <ArrowsClockwise size={18} />} {confirming ? `Convert and delete ${status.candidates} ${status.candidates === 1 ? "original" : "originals"}` : `Convert ${status.candidates} to CBZ`}</button>
+          {confirming ? <>
+            <button type="button" className="secondary-button" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
+            <small role="status">Each original is deleted once its CBZ reads whole. There is no undo.</small>
+          </> : null}
+        </> : null}
     </div>
   </SettingsCard>;
 }

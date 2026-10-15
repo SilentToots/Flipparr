@@ -72,13 +72,18 @@ export function SeriesDrawer({ series, families, allSeries, parentCollection, di
   // catalog is refetched on scans and downloads, so folding one into the
   // other guarantees a progress bar that lies.
   const [reading, setReading] = useState(null);
+  // A new run starts empty; a refetch of the same run (every page turn,
+  // every return to the tab) keeps what it has until the answer lands, and
+  // keeps it when the server does not answer -- the Read button and every
+  // progress bar went blank on each return, and stayed blank while the
+  // server was down.
+  useEffect(() => { setReading(null); }, [series?.id]);
   useEffect(() => {
     if (!series?.id) return undefined;
     let live = true;
-    setReading(null);
     apiRequest(`/api/v1/series/${series.id}/reading`)
       .then((data) => { if (live) setReading(data); })
-      .catch(() => { if (live) setReading(null); });
+      .catch(() => {});
     return () => { live = false; };
   }, [series?.id, readingVersion]);
   const readingFiles = useMemo(() => Object.fromEntries(

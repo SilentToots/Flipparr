@@ -2488,10 +2488,19 @@ function FileProblem({ item, onReplace }) {
 
 function ReplaceAllDamaged({ count, onReplaceAll }) {
   const [busy, setBusy] = useState(false);
+  // One tap queued every replacement at once; it asks once more first.
+  const [confirming, setConfirming] = useState(false);
+  const comics = `${count} damaged ${count === 1 ? "comic" : "comics"}`;
   return <div className="settings-card-actions">
-    <button type="button" className="secondary-button" disabled={busy} aria-busy={busy}
-      onClick={async () => { setBusy(true); try { await onReplaceAll(); } finally { setBusy(false); } }}>
-      {busy ? <LoadingSpinner size={18} /> : <CloudArrowDown size={18} />} Replace all {count} damaged comics</button>
+    {confirming
+      ? <>
+        <button type="button" className="primary-button" disabled={busy} aria-busy={busy}
+          onClick={async () => { setBusy(true); try { await onReplaceAll(); } finally { setBusy(false); setConfirming(false); } }}>
+          {busy ? <LoadingSpinner size={18} /> : <CloudArrowDown size={18} />} Request {count} {count === 1 ? "replacement" : "replacements"}</button>
+        <button type="button" className="secondary-button" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
+      </>
+      : <button type="button" className="secondary-button" onClick={() => setConfirming(true)}>
+        <CloudArrowDown size={18} /> Replace all {comics}</button>}
     <small>Each is added to the wanted list and stays readable until a good copy passes its checks. One whose issue already has a whole copy is left for you.</small>
   </div>;
 }
@@ -4966,6 +4975,10 @@ export function App() {
   const catalogRef = useRef(null);
   catalogRef.current = catalog;
   const catalogEtag = useRef(null);
+  // Which catalog request is the latest: an older answer landing after a
+  // newer one (a return-to-tab fetch resolving after a save's own reload)
+  // is dropped, or the grid shows pre-save data until the next poll.
+  const catalogRequest = useRef(0);
   // When the library was last fetched, for the refresh on return.
   const catalogLoadedAt = useRef(0);
   const [backendStatus, setBackendStatus] = useState("loading");
@@ -5469,6 +5482,7 @@ export function App() {
       // moving. With the tag of the answer in hand, the server says "nothing
       // changed" in a few bytes rather than the whole library again.
       const known = catalogEtag.current;
+      const sequence = ++catalogRequest.current;
       const response = await fetch("/api/v1/catalog", known ? { headers: { "If-None-Match": known } } : undefined);
       if (response.status === 304) {
         catalogLoadedAt.current = Date.now();
@@ -5482,6 +5496,7 @@ export function App() {
         error.reason = data.reason || "";
         throw error;
       }
+      if (sequence !== catalogRequest.current) return catalogRef.current;
       catalogEtag.current = response.headers.get("ETag") || null;
       catalogLoadedAt.current = Date.now();
       rememberAnswer("/api/v1/catalog", data);

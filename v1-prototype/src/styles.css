@@ -4062,7 +4062,7 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-surface.zoomed { cursor: grab; }
 .reader-surface.zoomed:active { cursor: grabbing; }
 .reader-page {
-  grid-area: 1 / 1; max-width: 100%; max-height: 100dvh; width: auto; height: auto;
+  grid-area: 1 / 1; max-width: 100%; max-height: 100%; width: auto; height: auto;
   object-fit: contain; visibility: hidden; user-select: none;
   /* No transition on the page's offset. There was one, and a zoom changed
      the page's size at once while its offset glided after -- the page

@@ -20,6 +20,13 @@ export function historyStep(here, target, state) {
   if (state?.from === target) return { kind: "back" };
   const now = new URLSearchParams(here.split("?")[1] || "");
   const next = new URLSearchParams(target.split("?")[1] || "");
+  // One comic to the next (Read next), one run's drawer to another run's:
+  // written over, keeping where the first was opened from, so closing the
+  // second is still Back to that place. Pushed, the first comic sat behind
+  // the second and Back reopened it -- the very thing closing-as-Back fixed.
+  if (IN_ADDRESS.some((key) => now.has(key) && next.has(key))) {
+    return { kind: "replace", state: state?.from ? { from: state.from } : null };
+  }
   if (IN_ADDRESS.some((key) => now.has(key) && !next.has(key))) return { kind: "replace", state: null };
   const opens = IN_ADDRESS.some((key) => next.has(key) && !now.has(key));
   return { kind: "push", state: opens ? { from: here } : null };

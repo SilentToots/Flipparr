@@ -245,7 +245,11 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
     if (frame.current) { cancelAnimationFrame(frame.current); applyMove(); }
     drag.current = null;
     if (current.drawing) {
-      if (draft && isDrawn(draft)) { setPanels((list) => [...list, draft]); setSelected(panels.length); setDirty(true); }
+      // From the lift itself, not `draft`: moves land once a frame, so the
+      // state here is a frame behind the finger and the panel lost its last
+      // sliver of movement.
+      const drawn = drawnRect(current.origin, pointAt(event));
+      if (isDrawn(drawn)) { setPanels((list) => [...list, drawn]); setSelected(panels.length); setDirty(true); }
       setDraft(null);
       return;
     }
@@ -416,8 +420,8 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
   </div>;
 }
 
-// A panel request that got no answer is asked again this many times, after
-// this long and then twice and three times as long.
+// A panel request that got no answer is asked this many times in all (the
+// first ask and two more), after this long and then twice as long.
 const PANEL_RETRIES = 3;
 const PANEL_RETRY_MS = 5000;
 
@@ -646,9 +650,13 @@ export function ReaderView({
     return () => { live = false; };
   }, [fileId, startPage]);
 
-  // A new comic is a new set of pages to read.
+  // A new comic is a new set of pages to read: what the last one's pages
+  // were (spreads) and which failed to load go too, or Read next opened the
+  // next comic announcing "Page 4 could not be loaded" from the last.
   useEffect(() => {
     setPanels({});
+    setSpreads({});
+    setPageFailures({});
     asking.current.clear();
     panelRetries.current = {};
     setPanel(0);
@@ -755,8 +763,9 @@ export function ReaderView({
       }
       if (first) return;
       if (zoomRef.current > 1) {
-        const fit = Math.min(1, box.width / image.naturalWidth, box.height / image.naturalHeight);
-        baseRef.current = { width: image.naturalWidth * fit, height: image.naturalHeight * fit };
+        // The same fit the page is laid out with (a spread fits by width
+        // alone), or the pan is clamped against a size the page is not.
+        baseRef.current = fittedSize({ width: image.naturalWidth, height: image.naturalHeight }, box);
         setPan((current) => clampPan(current, zoomRef.current, box, baseRef.current));
         // The size is inline from `baseRef`, which is not state; a render is
         // owed so the page takes its new 1x size.
@@ -1226,6 +1235,12 @@ export function ReaderView({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
       if (gesture) cancelAnimationFrame(gesture.frame);
+      // Set up again mid-pinch (the run's reading direction arriving from a
+      // catalog refresh): the pinch that was under way never lifts in this
+      // closure, and with the flags left on, swipes and panel drags stayed
+      // off until the next full pinch.
+      pinching.current = false;
+      dragged.current = false;
     };
   }, [panBounds, focusFor]);
 

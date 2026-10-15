@@ -18,6 +18,16 @@ test("closing it anywhere else writes over its entry, never stacks on it", () =>
   assert.deepEqual(historyStep("/library/all?read=63", "/library/all", null), { kind: "replace", state: null });
 });
 
+test("the next comic, or the next run's drawer, takes the first's entry and keeps its way back", () => {
+  // Read next from the finish drawer: ?read=63 -> ?read=64. Pushed, closing
+  // 64 replaced to /library and Back reopened 63 (the review of 2026-10-14).
+  assert.deepEqual(historyStep("/library?read=63", "/library?read=64", { from: "/library" }), { kind: "replace", state: { from: "/library" } });
+  assert.deepEqual(historyStep("/library?read=64", "/library", { from: "/library" }), { kind: "back" });
+  assert.deepEqual(historyStep("/library/all?series=61", "/library/all?series=62", { from: "/library/all" }), { kind: "replace", state: { from: "/library/all" } });
+  // With no way back remembered, nothing is invented.
+  assert.deepEqual(historyStep("/library?read=63", "/library?read=64", null), { kind: "replace", state: null });
+});
+
 test("a change of tab or page stacks as it always has", () => {
   assert.deepEqual(historyStep("/library", "/settings", null), { kind: "push", state: null });
   assert.deepEqual(historyStep("/settings", "/library", { from: "/somewhere" }), { kind: "push", state: null });

@@ -42,7 +42,9 @@ export function ReadingListDrawer({ list, allSeries = [], readingVersion = 0, re
     try {
       setDetail({ state: "done", data: await apiRequest(`/api/v1/reading-lists/${list.id}`), error: "" });
     } catch (error) {
-      setDetail({ state: "error", data: null, error: error.message });
+      // A refetch that fails -- the server away on a return to the tab --
+      // leaves the arc as it was rather than turning it into an error.
+      setDetail((current) => (current.data ? current : { state: "error", data: null, error: error.message }));
     }
   }, [list.id]);
   useEffect(() => { load(); }, [load, readingVersion]);
