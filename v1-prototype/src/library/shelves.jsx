@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { DiscoverCover } from "../components/CoverArt.jsx";
 import { CoverStatus } from "../components/CoverStatus.jsx";
-import { ReadState } from "../components/ReadState.jsx";
+import { ReadState, readStateWords } from "../components/ReadState.jsx";
 import { StackEdges } from "../components/StackEdges.jsx";
 import { ShelfBackIcon, ShelfNextIcon } from "../design-icons.jsx";
 import { CaretRight } from "@phosphor-icons/react";
@@ -23,7 +23,7 @@ export function LibraryShelf({ title, items, onSeeAll, onOpen }) {
       {items.map((card) => {
         const shelfCard = <article className="pull-card shelf-card" key={card.key}>
           <button type="button" className="discover-open shelf-card-art" onClick={() => onOpen(card)}
-            aria-label={[card.title, card.note].filter(Boolean).join(", ")}>
+            aria-label={[card.title, card.note, readStateWords({ finished: card.finished, fraction: card.progress })].filter(Boolean).join(", ")}>
             <DiscoverCover src={card.cover} alt="" glyph={30} />
             {/* A stack's count, or the host's download mark (Flipparr View); the web draws neither. */}
             {card.stack

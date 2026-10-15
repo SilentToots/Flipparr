@@ -50,7 +50,9 @@ export function usePullToRefresh({ enabled, onRefresh }) {
       window.removeEventListener("touchcancel", onEnd);
     };
   }, [enabled]);
-  return pull === "idle" ? null : <div className="pull-refresh" role="status" aria-live="polite">
-    {pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}
+  // Always in the document: a live region mounted already filled is skipped
+  // by screen readers; one that stays and changes its text is announced.
+  return <div className={`pull-refresh${pull === "idle" ? " idle" : ""}`} role="status" aria-live="polite">
+    {pull === "idle" ? null : <>{pull === "refreshing" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} {pull === "refreshing" ? "Refreshing…" : "Release to refresh"}</>}
   </div>;
 }

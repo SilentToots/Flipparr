@@ -267,7 +267,7 @@ export const states = [
   // panels are stubbed so the capture does not depend on what the finder
   // made of the scratch library's pages.
   readerState("reader-page", { panelMode: false }),
-  readerState("reader-panels", { panelMode: true }, ["img.reader-page.shown.panel-view"]),
+  readerState("reader-panels", { panelMode: true }, ["img.reader-page.shown.panel-view.scrim"]),
   { name: "discover", path: "/discover", stub: ["releases"], waitForCatalog: true, require: [".pull-card:not(.pull-card-skeleton)"], phoneRequire: [".page-header .appbar-search", ".pull-card:not(.pull-card-skeleton)"] },
   // Wanted is the first tab -- a request's row or the "All caught up" empty
   // state -- unless a reader's request is waiting, when the page opens on the

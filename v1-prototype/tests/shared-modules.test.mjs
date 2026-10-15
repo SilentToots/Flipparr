@@ -8,7 +8,8 @@ import path from "node:path";
 // App.jsx and never reaches back into it: App.jsx is the web app's own shell,
 // and Flipparr View does not load it.
 const SRC = path.join(import.meta.dirname, "..", "src");
-const SHARED = ["api.js", "host.js", "viewer.js", "dialogs.jsx", "editions.js", "components", "drawers", "frame", "library", "reader", "reader-app"];
+const SHARED = ["api.js", "host.js", "viewer.js", "dialogs.jsx", "editions.js", "history-step.js", "refresh-on-return.js", "recommended.js",
+  "components", "drawers", "frame", "library", "reader", "reader-app", "search", "settings"];
 
 function files(entry) {
   const full = path.join(SRC, entry);

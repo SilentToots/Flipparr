@@ -2250,6 +2250,8 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
   animation: pull-refresh-in var(--motion-duration-fast) var(--motion-ease-standard) backwards;
 }
 @keyframes pull-refresh-in { from { opacity: 0; translate: -50% -8px; } to { opacity: 1; translate: -50% 0; } }
+/* Idle, the live region stays in the document (announcers follow its text) and out of the way. */
+.pull-refresh.idle { visibility: hidden; animation: none; pointer-events: none; }
 .toast { position: fixed; z-index: 100; right: 24px; bottom: 24px; min-height: 48px; padding: 0 var(--space-16); border: 1px solid var(--green-border); border-radius: var(--radius-4); background: var(--surface-raised); color: var(--green-text); display: flex; align-items: center; gap: var(--space-8); box-shadow: 0 18px 50px var(--shadow-soft); }
 
 @media (max-width: 1100px) {
@@ -2883,9 +2885,9 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    Web Animations API falls back to, and what carries a resize. */
 [data-glass-placed] > .glass-indicator {
   transition:
-    translate var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
-    width var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
-    height var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1),
+    translate var(--motion-duration-standard) var(--motion-ease-sheet),
+    width var(--motion-duration-standard) var(--motion-ease-sheet),
+    height var(--motion-duration-standard) var(--motion-ease-sheet),
     opacity var(--motion-duration-fast) ease;
 }
 .comic-drawer-tabs.drawer-tabs button:focus-visible { outline: 2px solid var(--color-neutral-0); outline-offset: -2px; }
@@ -3182,7 +3184,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 /* The phone's View & sort sheet: from the bottom edge, above the tab bar, with
    every row at least 44px. */
 .library-sheet-backdrop { place-items: end stretch; padding: 0; }
-.library-sheet { width: 100%; max-height: min(85dvh, 640px); box-sizing: border-box; padding: var(--space-8) var(--space-16) calc(var(--space-16) + env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line-strong); border-bottom: 0; border-radius: var(--radius-16) var(--radius-16) 0 0; background: var(--surface-raised); box-shadow: 0 -18px 44px var(--scrim); animation: library-sheet-in var(--motion-duration-standard) cubic-bezier(.32, .72, 0, 1); }
+.library-sheet { width: 100%; max-height: min(85dvh, 640px); box-sizing: border-box; padding: var(--space-8) var(--space-16) calc(var(--space-16) + env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line-strong); border-bottom: 0; border-radius: var(--radius-16) var(--radius-16) 0 0; background: var(--surface-raised); box-shadow: 0 -18px 44px var(--scrim); animation: library-sheet-in var(--motion-duration-standard) var(--motion-ease-sheet); }
 @keyframes library-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
 .library-sheet > header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
 .library-sheet h2 { margin: 0; color: var(--text); font-size: var(--text-md); }
@@ -4030,7 +4032,7 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
    reading. */
 .reader {
   /* Pinned to the top and as tall as the screen the reader can see: the
-     visual viewport when the browser reports one (App.jsx sets the two
+     visual viewport when the browser reports one (ReaderView.jsx sets the two
      variables, and keeps them right through a rotation), else the dynamic
      viewport height. `inset: 0` alone fills iOS Safari's layout viewport,
      which lags the screen after a rotation and left the page behind showing
@@ -4069,7 +4071,7 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
   /* No transition on the page's offset. There was one, and a zoom changed
      the page's size at once while its offset glided after -- the page
      jumped, then drifted into place (floaty, the owner, 2026-10-07). Panel
-     view's flight between framings is the page's own animation (App.jsx,
+     view's flight between framings is the page's own animation (ReaderView.jsx,
      the FLIP after a step), and a drag is written a frame at a time. */
 }
 /* A zoomed page moves on its own layer, so a drag is a composite rather
@@ -4107,10 +4109,10 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
   -webkit-mask-composite: source-over, source-in; mask-composite: add, intersect;
-  transition: --hole-l0 180ms cubic-bezier(.2, .8, .2, 1), --hole-l1 180ms cubic-bezier(.2, .8, .2, 1),
-    --hole-r1 180ms cubic-bezier(.2, .8, .2, 1), --hole-r0 180ms cubic-bezier(.2, .8, .2, 1),
-    --hole-t0 180ms cubic-bezier(.2, .8, .2, 1), --hole-t1 180ms cubic-bezier(.2, .8, .2, 1),
-    --hole-b1 180ms cubic-bezier(.2, .8, .2, 1), --hole-b0 180ms cubic-bezier(.2, .8, .2, 1);
+  transition: --hole-l0 var(--motion-duration-standard) var(--motion-ease-standard), --hole-l1 var(--motion-duration-standard) var(--motion-ease-standard),
+    --hole-r1 var(--motion-duration-standard) var(--motion-ease-standard), --hole-r0 var(--motion-duration-standard) var(--motion-ease-standard),
+    --hole-t0 var(--motion-duration-standard) var(--motion-ease-standard), --hole-t1 var(--motion-duration-standard) var(--motion-ease-standard),
+    --hole-b1 var(--motion-duration-standard) var(--motion-ease-standard), --hole-b0 var(--motion-duration-standard) var(--motion-ease-standard);
 }
 @media (prefers-reduced-motion: reduce) { .reader-page.panel-view.scrim { transition: none; } }
 .reader-surface.zoomed .reader-page.shown { will-change: translate; }

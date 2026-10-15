@@ -159,7 +159,8 @@ function PanelEditor({ fileId, count, pages, startPage, readings, direction, onS
   // The next page's image is fetched ahead, so a turn does not wait on it.
   useEffect(() => {
     const next = pages[page + 1];
-    if (next?.readUrl) { const ahead = new Image(); ahead.src = next.readUrl; }
+    // Through the host (src): in Flipparr View a raw address cannot carry the token.
+    if (next?.readUrl) { const ahead = new Image(); ahead.src = src(next.readUrl); }
   }, [pages, page]);
 
   const finishRef = useRef(null);

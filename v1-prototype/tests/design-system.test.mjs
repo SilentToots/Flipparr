@@ -261,3 +261,21 @@ test("every custom property used is defined", () => {
   assert.deepEqual(missing, []);
 });
 
+
+test("every transition's duration is a motion token, and no curve is written by hand", () => {
+  // Durations are tokens as colours and spacing are: a transition written as
+  // 180ms cubic-bezier(...) is a motion nobody can change in one place (the
+  // review of 2026-10-14: the panel dim had eight of them). The named curves
+  // (ease, linear, ease-in-out) are CSS's own and stay; a cubic-bezier is a
+  // curve of ours and has a token. Keyframe animations are not held to this:
+  // the loops that exist are ambient loaders and a shake (library-skeleton,
+  // scanning, request-aimed, pin-wrong) whose timing is theirs.
+  const bad = styles()
+    .filter((d) => d.property === "transition" || d.property === "transition-duration" || d.property === "transition-timing-function")
+    .filter((d) => {
+      const stripped = d.value.replace(/var\(--motion-[a-z-]+\)/g, "");
+      return /(^|[\s,])\d*\.?\d+m?s\b/.test(stripped) || /cubic-bezier\(/.test(stripped);
+    })
+    .map((d) => where("styles.css", d));
+  assert.deepEqual(bad, []);
+});

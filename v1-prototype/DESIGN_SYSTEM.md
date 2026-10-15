@@ -765,6 +765,15 @@ Motion tokens:
   plus 12ms a step to a 900ms cap. It starts at the first number it is given,
   so a library's size does not run up from zero on every load.
 - Reduced motion collapses every duration.
+- **A transition's duration is a token, and a curve of ours has one too**
+  (`--motion-ease-*`); `npm test` fails a literal duration or a hand-written
+  `cubic-bezier` (`tests/design-system.test.mjs`): the panel dim was found
+  with eight copies of `180ms cubic-bezier(…)` that no token change could
+  reach (2026-10-14). CSS's named curves (`ease`, `linear`) stay as they
+  are. Keyframe animations are not held to this yet -- the few that exist
+  are ambient loaders and a shake with timing of their own -- and widths and
+  heights are not token-guarded at all: a cover is 120 px wide because
+  covers are, not because a scale says so.
 
 ## Breakpoints
 

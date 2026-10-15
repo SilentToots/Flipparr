@@ -29,6 +29,13 @@ test("shared screens load every image through the host", () => {
       for (const match of line.matchAll(/<img\b(?:=>|[^>])*?\bsrc=\{([^}]*)\}/g)) {
         if (!/^(src|imageSrc)\(/.test(match[1].trim())) bad.push(`${name}:${index + 1}  src={${match[1]}}`);
       }
+      // A preload is an image too: `new Image().src = url` bypassed the host
+      // (the panel editor's next page, the review of 2026-10-14).
+      for (const match of line.matchAll(/\.src\s*=\s*([^;]+);/g)) {
+        if (/new Image\(\)/.test(line) || /\bahead\b|\bpreload\b/.test(line)) {
+          if (!/^(src|imageSrc)\(/.test(match[1].trim())) bad.push(`${name}:${index + 1}  .src = ${match[1].trim()}`);
+        }
+      }
     });
   }
   assert.deepEqual(bad, []);

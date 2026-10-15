@@ -118,7 +118,12 @@ never cause**, rather than on change itself:
 - a border that stopped being visible
 
 Drift in colour is expected while the palette migrates and is reported, not
-failed. The diff images in `diff/` are there to be looked at once per screen.
+failed. So is a small drift on the drawer tab states and `reader-panels@phone`
+(0.2-1.3%): the capture lands while the glass tab indicator glides or the
+panel dim's hole settles, at a different instant each run -- the same
+commit captured twice shows it. Look at the diff image; a red smear under a
+tab or along a panel's edge is the transition, not a change. (Waiting for
+`transitionend` before the shot would end this; it has not been done.) The diff images in `diff/` are there to be looked at once per screen.
 
 A commit that removes or adds a component reflows on purpose. Declare it with
 `--allow-structural` and the first three become warnings; contrast and borders

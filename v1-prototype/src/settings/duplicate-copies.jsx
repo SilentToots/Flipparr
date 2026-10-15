@@ -21,14 +21,15 @@ export function DuplicateCopies({ onChanged }) {
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
   const load = useCallback(() => apiRequest("/api/v1/library/duplicates")
-    .then((data) => { setIssues(data.issues || []); setChosen({}); }, () => setIssues([])), []);
+    .then((data) => { setIssues(data.issues || []); setChosen({}); },
+      (failure) => { setIssues([]); setError(failure.message || "The duplicate copies could not be read"); }), []);
   useEffect(() => { load(); }, [load]);
   const plan = useMemo(() => (issues || []).map((group) => {
     const keep = chosen[group.issueId] || group.keepFileId;
     const kept = group.copies.find((copy) => copy.fileId === keep) || group.copies[0];
     return { group, kept, others: group.copies.filter((copy) => copy !== kept), swapped: keep !== group.keepFileId };
   }), [issues, chosen]);
-  if (!issues || (!issues.length && !result)) return null;
+  if (!issues || (!issues.length && !result && !error)) return null;
   async function keepThem() {
     setBusy(true);
     setError("");

@@ -17,7 +17,8 @@ export function LibraryCbzConversion() {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const load = useCallback(() => apiRequest("/api/v1/library/cbz-conversion").then(setStatus, () => {}), []);
+  const load = useCallback(() => apiRequest("/api/v1/library/cbz-conversion").then(setStatus,
+    (failure) => setError(failure.message || "The conversion's state could not be read")), []);
   useEffect(() => { load(); }, [load]);
   // While it runs, how far it has got.
   useEffect(() => {
@@ -43,9 +44,12 @@ export function LibraryCbzConversion() {
     if (!keepOriginals && !confirming) { setConfirming(true); return; }
     act("start");
   }
+  if (!status && error) return <SettingsCard title="Existing CBR comics"><p className="workbench-error" role="alert">{error}</p></SettingsCard>;
   if (!status || (!status.candidates && !status.running && !status.finishedAt)) return null;
   const finished = status.done + status.kept + status.failed;
   return <SettingsCard title="Existing CBR comics">
+    {/* Said once at the start and once at the end; the moving count below is for the eye. */}
+    <p className="sr-only" role="status">{status.running ? `Converting ${status.total} comics to CBZ in the background.` : status.finishedAt ? "The conversion has finished." : ""}</p>
     <p className="settings-card-lead">{status.running
       ? `Converting ${finished + 1} of ${status.total}${status.current ? `: ${status.current}` : ""}`
       : status.candidates

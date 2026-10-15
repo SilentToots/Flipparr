@@ -5,14 +5,22 @@
 // right, a collection's bottom left, a Read button top left -- and the check
 // is never used here, so it keeps one meaning: read.
 
+/** The mark in words -- "Read", "42% read", or "" for nothing yet -- for a label that must carry it itself. */
+export function readStateWords({ finished = false, fraction = 0 } = {}) {
+  if (finished) return "Read";
+  const share = Math.max(0, Math.min(1, Number(fraction) || 0));
+  if (!share) return "";
+  return `${Math.min(Math.max(1, Math.round(share * 100)), 99)}% read`;
+}
+
 /** `fraction`: 0..1 of the comic (or of a run's comics) read. */
 export function ReadState({ finished = false, fraction = 0 }) {
-  if (finished) return <span className="read-state sash" role="img" aria-label="Read"><b aria-hidden="true">Read</b></span>;
-  const share = Math.max(0, Math.min(1, Number(fraction) || 0));
-  if (!share) return null;
-  const percent = Math.max(1, Math.round(share * 100));
-  const shown = Math.min(percent, 99);
-  return <span className="read-state tag" role="img" aria-label={`${shown}% read`}>{shown}%</span>;
+  const words = readStateWords({ finished, fraction });
+  if (!words) return null;
+  // Inside a button with a label of its own this role="img" is never spoken:
+  // the button's label carries the words (readStateWords); this is for the eye.
+  if (finished) return <span className="read-state sash" role="img" aria-label={words}><b aria-hidden="true">Read</b></span>;
+  return <span className="read-state tag" role="img" aria-label={words}>{words.replace(" read", "")}</span>;
 }
 
 /**

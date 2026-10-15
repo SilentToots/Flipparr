@@ -188,6 +188,19 @@ You lose manual corrections, aliases and request history — not files.
   the payload was the cost); a first panel read extracts a page once, not
   three or four times, and takes its hash from the fingerprint the store
   already holds (docs/PERFORMANCE.md).
+- Tests, accessibility and copy, from the same review (Tier D): the
+  pull-to-refresh pill stays in the document so screen readers announce it;
+  a shelf card's name carries its reading state ("Read", "42% read") where
+  the sash inside the button was never spoken; the CBZ conversion says a
+  start and a finish once, and both it and the duplicate-copies card say
+  when they could not load instead of hiding; the overnight read's card
+  shows it is saving and warns when From and Until are the same hour (no
+  window); the panel editor's next-page preload goes through the host, so
+  it works in Flipparr View too; a transition's duration must be a motion
+  token and no curve may be written by hand (`npm test` enforces it; the
+  panel dim and the glass indicator were rewritten in tokens); the harness
+  now proves the dim in the panel-view capture, and the shared-module and
+  host-image checks cover the settings and search screens.
 - Flipparr View (needs the next TestFlight build): a download making room
   removes another profile's *finished* comic from that profile's own folder,
   leaves them a note shown when they next open the app, and tells the server

@@ -16,6 +16,11 @@ export function dueForRefresh(lastAt, now) {
   return !lastAt || now - lastAt >= REFRESH_ON_RETURN_MS;
 }
 
+/** Whether a visibility change -- to `state` at `now`, the library last fetched at `lastAt` -- is a return that refreshes. */
+export function refreshesOnReturn(state, lastAt, now) {
+  return state === "visible" && dueForRefresh(lastAt, now);
+}
+
 /**
  * Calls `refresh` when the page is shown again and the library, last
  * fetched at `loadedAt.current`, is due. `enabled` false (Flipparr View
@@ -27,7 +32,7 @@ export function useRefreshOnReturn(loadedAt, refresh, enabled = true) {
   useEffect(() => {
     if (!enabled) return undefined;
     const onVisible = () => {
-      if (document.visibilityState !== "visible" || !dueForRefresh(loadedAt.current, Date.now())) return;
+      if (!refreshesOnReturn(document.visibilityState, loadedAt.current, Date.now())) return;
       latest.current();
     };
     document.addEventListener("visibilitychange", onVisible);
