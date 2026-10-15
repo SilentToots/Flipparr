@@ -7108,7 +7108,7 @@ def _member_strictly(path: Path, member: str) -> tuple[bytes | None, str]:
     if not tool or member.startswith("-"):
         return None, ""
     try:
-        stdout, stderr, returncode = _run_tool_bounded([tool, "-xOf", str(path), member], CBZ_MEMBER_MAX_BYTES)
+        stdout, stderr, returncode = _run_tool_bounded([tool, "-xOf", str(path), _member_pattern(member)], CBZ_MEMBER_MAX_BYTES)
     except (OSError, subprocess.SubprocessError) as exc:
         return None, str(exc)
     return (stdout if stdout and returncode == 0 else None), stderr.decode("utf-8", "replace")
@@ -10819,6 +10819,15 @@ def archive_kind(path: Path) -> str | None:
     return None
 
 
+def _member_pattern(member: str) -> str:
+    """A member's name as bsdtar must be given it: in x mode a name is a
+    shell-style pattern, so `[cover].jpg` matched nothing ("Not found in
+    archive") and `a*b.jpg` could match another page. A backslash makes
+    each of `[ ] * ? \\` itself (libarchive's archive_match; checked against
+    bsdtar 3.5.3 and 3.8.9, 2026-10-15)."""
+    return re.sub(r"([\[\]*?\\])", r"\\\1", member)
+
+
 def _run_archive_tool(arguments: list[str], limit: int) -> bytes:
     tool = _external_archive_tool()
     if not tool:
@@ -10945,7 +10954,7 @@ def _archive_tool_says_locked(path: Path) -> str | None:
             if Path(name).suffix.lower() in ARCHIVE_IMAGE_EXTENSIONS and not name.startswith("-"))
         if not pages:
             return None
-        _page, said = complaint(["-xOf", str(path), pages[0]])
+        _page, said = complaint(["-xOf", str(path), _member_pattern(pages[0])])
     except (OSError, subprocess.SubprocessError):
         return None
     return "The archive is password-protected" if _LOCKED_ARCHIVE_WORDS.search(said) else None
@@ -10980,7 +10989,7 @@ def read_archive_member(path: Path, member: str, limit: int = COVER_SOURCE_MAX_B
     if member.startswith("-"):
         # It would arrive at the tool as an option rather than a name.
         raise ValueError("Flipparr will not read a member whose name begins with a dash")
-    return _run_archive_tool(["-xOf", str(path), member], limit)
+    return _run_archive_tool(["-xOf", str(path), _member_pattern(member)], limit)
 
 
 def _zip_xml(archive: zipfile.ZipFile, member_name: str) -> ET.Element | None:
@@ -11316,7 +11325,7 @@ _CACHE_SWEEP_LOCK = threading.Lock()
 _CACHE_SWEPT_AT: dict[str, float] = {}
 
 
-def sweep_image_cache(cache_dir: Path, budget: int, interval: float = 60.0) -> int:
+def sweep_image_cache(cache_dir: Path, budget: int, interval: float = 60.0, keep_fresh: float = 0.0) -> int:
     """Drop the least recently used files until the cache fits its budget.
 
     Reading a comic writes a page at a time, so without this the directory
@@ -11324,6 +11333,11 @@ def sweep_image_cache(cache_dir: Path, budget: int, interval: float = 60.0) -> i
     preloads arriving together should walk the directory once, not eight
     times, and every filesystem error is swallowed: a cache that cannot be
     swept must degrade to rendering again, never to a failed page.
+
+    `keep_fresh`: files written within this many seconds stay whatever the
+    budget. A package is built, said ready, and fetched a moment later; a
+    sweep for another package in between deleted it, and the device got a
+    500 for a file the server had just promised.
 
     Returns the bytes removed, for the test and for nothing else.
     """
@@ -11336,13 +11350,16 @@ def sweep_image_cache(cache_dir: Path, budget: int, interval: float = 60.0) -> i
     try:
         entries = []
         total = 0
+        fresh_after = time.time() - keep_fresh
         with os.scandir(cache_dir) as listing:
             for entry in listing:
                 if not entry.is_file():
                     continue
                 stat = entry.stat()
-                entries.append((stat.st_mtime, stat.st_size, entry.path))
                 total += stat.st_size
+                if keep_fresh and stat.st_mtime >= fresh_after:
+                    continue
+                entries.append((stat.st_mtime, stat.st_size, entry.path))
     except OSError:
         return 0
     if total <= budget:
@@ -15180,6 +15197,9 @@ PACKAGE_PENDING_MAX = 64
 # A comic that could not be packed answers so for a while, rather than being
 # tried again on every retry.
 PACKAGE_FAILURE_SECONDS = 600
+# Seconds a freshly built package is kept whatever the cache's budget: it
+# is said ready and fetched a moment later (the review of 2026-10-14).
+PACKAGE_FRESH_SECONDS = 900
 _PACKAGE_LOCK = threading.Lock()
 _PACKAGE_BUILDS: dict[int, threading.Thread] = {}
 _PACKAGE_FAILED: dict[tuple[int, str], tuple[float, str]] = {}
@@ -15356,7 +15376,9 @@ def build_offline_package(file_id: int) -> Path:
             pages.__exit__(None, None, None)
         with contextlib.suppress(OSError):
             partial.unlink()
-    sweep_image_cache(target.parent, PACKAGE_CACHE_MAX_BYTES, interval=0)
+    # Packages built in the last while stay: one is said ready and fetched a
+    # moment later, and this sweep ran between the two.
+    sweep_image_cache(target.parent, PACKAGE_CACHE_MAX_BYTES, interval=0, keep_fresh=PACKAGE_FRESH_SECONDS)
     return target
 
 
@@ -22690,7 +22712,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"status": "preparing", "retryAfter": state["wait"]}, 503,
                            headers={"Retry-After": str(state["wait"])})
             return
-        self.send_file(state["ready"], "application/zip", f'"{state["ready"].stem}"')
+        try:
+            self.send_file(state["ready"], "application/zip", f'"{state["ready"].stem}"')
+        except FileNotFoundError:
+            # Swept between "ready" and this open (the cache over its budget):
+            # packed again, and the device told to ask again, as while it packs.
+            with contextlib.suppress(Exception):
+                offline_package(file_id)
+            self.send_json({"status": "preparing", "retryAfter": 5}, 503, headers={"Retry-After": "5"})
 
     def send_file(self, path: Path, content_type: str, etag: str) -> None:
         """A file on disk, streamed rather than read into memory, with a
@@ -23320,11 +23349,14 @@ class _ServerLogHandler(logging.Handler):
 
 
 def _route_server_logs() -> None:
-    logger = logging.getLogger("waitress")
-    if not any(isinstance(handler, _ServerLogHandler) for handler in logger.handlers):
-        logger.addHandler(_ServerLogHandler())
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
+    # Waitress's notices, and the store's own few lines (what a merge let go
+    # of), as lines of the structured log.
+    for name in ("waitress", "flipparr.catalog"):
+        logger = logging.getLogger(name)
+        if not any(isinstance(handler, _ServerLogHandler) for handler in logger.handlers):
+            logger.addHandler(_ServerLogHandler())
+            logger.setLevel(logging.INFO)
+            logger.propagate = False
 
 
 def make_server(host: str, port: int) -> tuple[Any, int]:

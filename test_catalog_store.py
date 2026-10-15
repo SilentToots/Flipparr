@@ -6667,6 +6667,22 @@ class PersonalIssueDataTests(_ComicCatalogTestCase):
             self.assertEqual(connection.execute("SELECT rating FROM series_run_ratings WHERE series_run_id=?", (keep,)).fetchone()[0], 5)
         self.assertEqual(self._comic(issue)["finished_at"], "2026-10-02", "read, on the issue it merged into")
 
+    def test_where_both_issues_are_rated_the_newer_rating_stands(self):
+        # The docstring always said so; the target's stood whatever its date.
+        one, two = self.issue["Example 001.cbz"], self.issue["Example 002.cbz"]
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute("INSERT INTO issue_ratings(user_id, issue_id, rating, updated_at) VALUES (?, ?, 2, '2026-10-01T00:00:00+00:00')", (ADMIN_USER_ID, one))
+            connection.execute("INSERT INTO issue_ratings(user_id, issue_id, rating, updated_at) VALUES (?, ?, 5, '2026-10-05T00:00:00+00:00')", (ADMIN_USER_ID, two))
+            connection.execute("INSERT INTO issue_cover_preferences(issue_id, source, cover_url, updated_at) VALUES (?, 'file', NULL, '2026-10-06T00:00:00+00:00')", (one,))
+            connection.execute("INSERT INTO issue_cover_preferences(issue_id, source, cover_url, updated_at) VALUES (?, 'provider', 'x', '2026-10-02T00:00:00+00:00')", (two,))
+        with self.store._write_lock, self.store._connect() as connection:
+            self.store._move_personal_issue_data(connection, one, two)
+        with sqlite3.connect(self.store.database_path) as connection:
+            ratings = connection.execute("SELECT issue_id, rating FROM issue_ratings").fetchall()
+            covers = connection.execute("SELECT issue_id, source FROM issue_cover_preferences").fetchall()
+        self.assertEqual(ratings, [(two, 5)], "the target's rating was newer: it stands, the older goes")
+        self.assertEqual(covers, [(two, "file")], "the moved issue's cover was newer: it takes the target's place")
+
     def test_a_rebuild_never_deletes_an_issue_someone_rated_or_read(self):
         run = self._run_of(self.issue["Example 001.cbz"])
         with sqlite3.connect(self.store.database_path) as connection:

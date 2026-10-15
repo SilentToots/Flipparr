@@ -2848,6 +2848,13 @@ class FilenameParserTests(unittest.TestCase):
             # directory that is not there at all.
             self.assertEqual(sweep_image_cache(cache, 10 ** 9, interval=0), 0)
             self.assertEqual(sweep_image_cache(Path(folder) / "missing", 1, interval=0), 0)
+            # A file written just now stays whatever the budget: a package is
+            # said ready and fetched a moment later.
+            fresh = cache / "fresh.zip"
+            fresh.write_bytes(b"x" * 4096)
+            sweep_image_cache(cache, 1, interval=0, keep_fresh=600)
+            self.assertTrue(fresh.exists(), "kept, being fresh")
+            self.assertEqual(sorted(item.name for item in cache.glob("*.jpg")), [], "the old pages went")
 
     def test_a_pages_listing_is_remembered_until_the_file_changes(self):
         """Listing a CBR is a process that scans the whole archive, and a
@@ -11330,6 +11337,26 @@ class UnpackTests(unittest.TestCase):
                 self.assertEqual(pages.read("p/02.jpg"), b"p/02")
                 folder = pages.folder
             self.assertFalse(folder.exists(), "the work folder goes with it")
+
+    def test_a_page_named_like_a_pattern_is_still_found(self):
+        # bsdtar takes a member name as a shell pattern in x mode: `[cover].jpg`
+        # was "Not found in archive" and graded unreadable, and `a*b.jpg` could
+        # have matched another page. Escaped, each name is itself.
+        import tarfile
+        if not app._external_archive_tool():
+            self.skipTest("bsdtar is not installed")
+        comic = self.root / "odd.cbt"
+        names = ("[cover].jpg", "a*b.jpg", "q?.jpg", "back\\slash.jpg", "plain.jpg")
+        with tarfile.open(comic, "w") as archive:
+            for name in names:
+                info = tarfile.TarInfo(name)
+                info.size = len(name)
+                archive.addfile(info, io.BytesIO(name.encode()))
+        for name in names:
+            self.assertEqual(app.read_archive_member(comic, name), name.encode(), name)
+            body, said = app._member_strictly(comic, name)
+            self.assertEqual((body, said), (name.encode(), ""), name)
+        self.assertEqual(app._member_pattern("p/01.jpg"), "p/01.jpg", "a plain name is untouched")
 
 
 class CbzConversionTests(unittest.TestCase):

@@ -9,6 +9,7 @@ import datetime as dt
 import difflib
 import hashlib
 import json
+import logging
 
 import content_rating
 import math
@@ -25,6 +26,16 @@ from typing import Any, Callable, Iterable, Sequence
 
 
 SCHEMA_VERSION = 79
+
+# What a merge let go of, said where the server's log can carry it (app.py
+# routes this logger into the structured log): the merged-away issue's rows
+# cascade with it, so the record would otherwise be nowhere.
+_CATALOG_LOG = logging.getLogger("flipparr.catalog")
+
+
+def _note_dropped(kind: str, user_id: Any, issue_id: Any, value: Any, at: Any, *, kept: Any) -> None:
+    _CATALOG_LOG.info("merge dropped the older %s of issue %s%s: %s (%s); kept %s",
+                      kind, issue_id, f" for user {user_id}" if user_id is not None else "", value, at, kept)
 
 # What is kept with a file's signature, so that a changed file is looked at
 # again -- and carried over when the change is only a CBZ conversion of the
@@ -4530,15 +4541,34 @@ class CatalogStore:
                                    (row["user_id"], int(from_issue)))
         if only_file is not None:
             return
+        # Ratings and the chosen cover: where both issues have one, the newer
+        # stands, as the docstring always said -- the target's stood whatever
+        # its date until the review of 2026-10-14 -- and the one that goes is
+        # said in the log, since the merged-away issue's rows cascade with it.
         for row in connection.execute("SELECT * FROM issue_ratings WHERE issue_id=?", (int(from_issue),)).fetchall():
-            there = connection.execute("SELECT 1 FROM issue_ratings WHERE user_id=? AND issue_id=?",
+            there = connection.execute("SELECT rating, updated_at FROM issue_ratings WHERE user_id=? AND issue_id=?",
                                        (row["user_id"], int(to_issue))).fetchone()
-            if there is None:
+            if there is None or not self._stored_is_newer(there["updated_at"], row["updated_at"]):
+                if there is not None:
+                    connection.execute("DELETE FROM issue_ratings WHERE user_id=? AND issue_id=?", (row["user_id"], int(to_issue)))
+                    _note_dropped("rating", row["user_id"], to_issue, there["rating"], there["updated_at"], kept=row["rating"])
                 connection.execute("UPDATE issue_ratings SET issue_id=? WHERE user_id=? AND issue_id=?",
                                    (int(to_issue), row["user_id"], int(from_issue)))
-        cover = connection.execute("SELECT 1 FROM issue_cover_preferences WHERE issue_id=?", (int(to_issue),)).fetchone()
-        if cover is None:
+            else:
+                connection.execute("DELETE FROM issue_ratings WHERE user_id=? AND issue_id=?", (row["user_id"], int(from_issue)))
+                _note_dropped("rating", row["user_id"], from_issue, row["rating"], row["updated_at"], kept=there["rating"])
+        cover = connection.execute("SELECT source, cover_url, updated_at FROM issue_cover_preferences WHERE issue_id=?",
+                                   (int(to_issue),)).fetchone()
+        mine = connection.execute("SELECT source, cover_url, updated_at FROM issue_cover_preferences WHERE issue_id=?",
+                                  (int(from_issue),)).fetchone()
+        if mine is not None and (cover is None or not self._stored_is_newer(cover["updated_at"], mine["updated_at"])):
+            if cover is not None:
+                connection.execute("DELETE FROM issue_cover_preferences WHERE issue_id=?", (int(to_issue),))
+                _note_dropped("cover", None, to_issue, cover["source"], cover["updated_at"], kept=mine["source"])
             connection.execute("UPDATE issue_cover_preferences SET issue_id=? WHERE issue_id=?", (int(to_issue), int(from_issue)))
+        elif mine is not None:
+            connection.execute("DELETE FROM issue_cover_preferences WHERE issue_id=?", (int(from_issue),))
+            _note_dropped("cover", None, from_issue, mine["source"], mine["updated_at"], kept=cover["source"])
 
     def _backfill_comic_reading(self, connection: sqlite3.Connection) -> int:
         """Every file's place taken to its comic, per profile: started is the

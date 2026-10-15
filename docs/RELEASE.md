@@ -173,6 +173,13 @@ You lose manual corrections, aliases and request history — not files.
   a drawn panel keeps its last sliver of movement; "Convert to CBZ" asks
   once more when originals will be deleted, and "Replace all damaged" asks
   before queuing every replacement.
+- Server, from the same review (Tier B): a page whose name reads as a shell
+  pattern (`[cover].jpg`) is read from a RAR -- bsdtar took the name as a
+  pattern and called the page unreadable; a package built in the last
+  fifteen minutes is never swept, and one swept between "ready" and its
+  fetch is packed again with a wait, not a 500; where two merged issues
+  both carry a profile's rating or a chosen cover, the newer stands (the
+  target's stood whatever its date), and the one let go is said in the log.
 - Flipparr View (needs the next TestFlight build): a download making room
   removes another profile's *finished* comic from that profile's own folder,
   leaves them a note shown when they next open the app, and tells the server
