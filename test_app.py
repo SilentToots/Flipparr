@@ -12055,6 +12055,10 @@ class OvernightPanelTests(_ComicCopiesTestCase):
         self._spent(0.004)  # pricing begins: the night counted at the estimate stays counted once
         view = app._vision_cost_view()
         self.assertEqual((view["overnightEstimatedBefore"], view["overnightSpent"]), (10.0, 10.0))
+        self._spent(0.01, overnight=False, times=20)  # enough pages measured: the earlier nights at the real price
+        view = app._vision_cost_view()
+        self.assertTrue(view["measured"])
+        self.assertAlmostEqual(view["overnightEstimatedBefore"], round(2000 * view["perPage"], 2), places=2)
 
     def test_the_price_a_page_is_measured_once_there_are_enough_pages(self):
         self._spent(0.004, overnight=False, times=19)

@@ -18758,9 +18758,10 @@ def _vision_cost_view() -> dict[str, Any]:
     summary = store.vision_cost_summary()
     measured = summary["perPage"] is not None and summary["measuredCalls"] >= 20
     per_page = float(summary["perPage"]) if measured else VISION_PAGE_COST_ESTIMATE
-    # Nights read before calls were priced, at the estimate: counted, so a
-    # budget set after them knows what they took.
-    earlier = store.overnight_vision_pages_unpriced(summary["overnightSince"]) * VISION_PAGE_COST_ESTIMATE
+    # Nights read before calls were priced, at the page price -- measured
+    # once there is one (the estimate was half the real price, 2026-10-16):
+    # counted, so a budget set after them knows what they took.
+    earlier = store.overnight_vision_pages_unpriced(summary["overnightSince"]) * per_page
     # Calls with tokens but no list price (an OpenAI model, one not in
     # VISION_PRICES_PER_MTOK) count at the page price, so a budget still holds.
     earlier += summary["overnightUnpriced"] * per_page
