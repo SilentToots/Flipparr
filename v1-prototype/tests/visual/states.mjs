@@ -298,7 +298,6 @@ export const states = [
   // pass: copy, spacing and grouping changed in all of them).
   { name: "settings-index", path: "/settings", require: [".settings-index"], desktop: false },
   { name: "settings-profile", path: "/settings/profile", require: [".settings-card"] },
-  { name: "settings-matching", path: "/settings/matching", require: [".settings-card"] },
   { name: "settings-metadata", path: "/settings/metadata", require: [".settings-card"] },
   { name: "settings-profiles", path: "/settings/profiles", require: [".settings-card"] },
   { name: "settings-security", path: "/settings/security", require: [".settings-card"] },
