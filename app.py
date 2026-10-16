@@ -596,6 +596,11 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     "overnightPanelsStart": 0,
     "overnightPanelsEnd": 6,
     "overnightVisionPages": 1000,
+    # A cap on what the overnight read spends on the vision model in all,
+    # in dollars, priced from each call's own token counts (vision_usage);
+    # 0: no cap but the nightly page limit (the owner, 2026-10-16: "I have
+    # a $100 credit").
+    "overnightVisionBudget": 0,
 }
 RELEASE_SOURCES = ("usenet", "torrent", "direct_site")
 _APP_SETTINGS_BOOL_KEYS = frozenset({
@@ -603,7 +608,8 @@ _APP_SETTINGS_BOOL_KEYS = frozenset({
     "ratingsFromCovers", "communityListsEnabled", "logClientAddresses", "convertNewToCbz", "autoReplaceDamaged",
     "overnightPanels",
 })
-OVERNIGHT_VISION_CHOICES = (0, 100, 300, 1000)
+OVERNIGHT_VISION_CHOICES = (0, 100, 300, 1000, 2000, 3000, 5000)
+OVERNIGHT_BUDGET_CHOICES = (0, 10, 25, 50, 100, 200)
 _OVERNIGHT_HOUR_KEYS = ("overnightPanelsStart", "overnightPanelsEnd")
 
 
@@ -612,6 +618,8 @@ def _valid_overnight(key: str, value: Any) -> bool:
         return False
     if key in _OVERNIGHT_HOUR_KEYS:
         return 0 <= value <= 23
+    if key == "overnightVisionBudget":
+        return value in OVERNIGHT_BUDGET_CHOICES
     return value in OVERNIGHT_VISION_CHOICES
 # Every quarter hour, hour, six hours, or day.
 AUTO_SCAN_INTERVALS = (15, 60, 360, 1440)
@@ -636,7 +644,7 @@ def load_app_settings() -> dict[str, Any]:
                 elif key == "autoScanIntervalMinutes":
                     if isinstance(value, int) and not isinstance(value, bool) and value in AUTO_SCAN_INTERVALS:
                         settings[key] = value
-                elif key in (*_OVERNIGHT_HOUR_KEYS, "overnightVisionPages"):
+                elif key in (*_OVERNIGHT_HOUR_KEYS, "overnightVisionPages", "overnightVisionBudget"):
                     if _valid_overnight(key, value):
                         settings[key] = value
                 elif key == "sourcePriority":
@@ -693,6 +701,8 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Choose an hour from 0 to 23")
         if key == "overnightVisionPages" and not _valid_overnight(key, value):
             raise ValueError("Choose one of the nightly limits Flipparr offers")
+        if key == "overnightVisionBudget" and not _valid_overnight(key, value):
+            raise ValueError("Choose one of the overnight budgets Flipparr offers")
         if key == "sourcePriority":
             if not _is_source_order(value):
                 raise ValueError("List Usenet, torrents and direct downloads once each")
@@ -2023,7 +2033,7 @@ def find_run_rating(series_run_id: int) -> tuple[str | None, str | None, str | N
     if load_app_settings().get("ratingsFromCovers") and vision_provider():
         file_id = store.newest_file_of_run(series_run_id)
         if file_id is not None:
-            answer = ask_vision_model(_cover_for_rating(file_id), content_rating.COVER_PROMPT)
+            answer = ask_vision_model(_cover_for_rating(file_id), content_rating.COVER_PROMPT, purpose="cover_rating")
             rating, printed = content_rating.rating_from_cover_answer(answer)
             if rating:
                 return rating, "cover", f"\u201c{printed}\u201d on the cover"
@@ -15642,7 +15652,43 @@ def _vision_answer(provider: str, payload: dict[str, Any]) -> str:
     return str(content or "")
 
 
-def ask_vision_model(image: bytes, prompt: str, examples: list[tuple[bytes, str]] | None = None) -> str:
+# List prices in dollars per million tokens (input, output), for pricing each
+# call from its own token counts (vision_usage). Anthropic's published API
+# prices, as of 2026-10-06; a model not listed is recorded with its tokens
+# and no price, and the cost shown falls back to the documented estimate.
+VISION_PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
+    "claude-sonnet-5": (2.0, 10.0), "claude-sonnet-5-5": (2.0, 10.0), "claude-opus-5-5": (4.0, 20.0),
+    "claude-opus-5": (5.0, 25.0), "claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-4-6": (3.0, 15.0),
+}
+# What one vision page costs when nothing has been measured yet: a page sent
+# at reading size is a couple of thousand input tokens and a short answer,
+# about half a cent at Sonnet's price (docs/OPERATING.md).
+VISION_PAGE_COST_ESTIMATE = 0.005
+
+
+def _vision_usage(provider: str, payload: dict[str, Any]) -> tuple[int | None, int | None, float | None, str]:
+    """A call's input and output tokens, from the provider's own answer, and
+    what they cost at the model's list price (None when it is not known)."""
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    usage = usage if isinstance(usage, dict) else {}
+    model = str(payload.get("model") or (VISION_MODEL if provider == "anthropic" else VISION_MODEL_OPENAI))
+    if provider == "anthropic":
+        plain = int(usage.get("input_tokens") or 0)
+        written = int(usage.get("cache_creation_input_tokens") or 0)
+        cached = int(usage.get("cache_read_input_tokens") or 0)
+        output = int(usage.get("output_tokens") or 0)
+        price = VISION_PRICES_PER_MTOK.get(model) or VISION_PRICES_PER_MTOK.get(VISION_MODEL)
+        cost = None if price is None else (
+            (plain + written * 1.25 + cached * 0.1) * price[0] + output * price[1]) / 1_000_000
+        return plain + written + cached, output, cost, model
+    prompt_tokens = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    return (int(prompt_tokens) if prompt_tokens is not None else None,
+            int(completion) if completion is not None else None, None, model)
+
+
+def ask_vision_model(image: bytes, prompt: str, examples: list[tuple[bytes, str]] | None = None,
+                     *, purpose: str = "panels") -> str:
     """One question about one page image, answered as text, by whichever connector is on.
 
     A POST with the page as a base64 JPEG -- Anthropic's Messages API or
@@ -15694,6 +15740,12 @@ def ask_vision_model(image: bytes, prompt: str, examples: list[tuple[bytes, str]
         raise VisionUnavailable(f"{provider} answered with something other than JSON") from exc
     if credential in json.dumps(payload, ensure_ascii=False):
         raise VisionUnavailable("Provider returned unsafe credential-bearing data")
+    try:
+        input_tokens, output_tokens, cost, model = _vision_usage(provider, payload)
+        catalog_store().record_vision_usage(provider, model, purpose, overnight=bool(getattr(_OVERNIGHT, "active", False)),
+                                            input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost)
+    except Exception as exc:  # noqa: BLE001 -- what a call cost is a record, never a reason to lose its answer
+        log_exception("vision_usage_record_failed", exc, level="warning")
     return _vision_answer(provider, payload)
 
 
@@ -15904,7 +15956,7 @@ def vision_order(image: bytes, panels: list[dict[str, Any]], direction: str) -> 
 
     Raises VisionUnavailable when the connector did not answer.
     """
-    text = ask_vision_model(image, panel_finder.vision_order_prompt(panels, direction))
+    text = ask_vision_model(image, panel_finder.vision_order_prompt(panels, direction), purpose="panel_order")
     return panel_finder.parse_vision_order(text, len(panels))
 
 
@@ -18472,12 +18524,12 @@ WORKER_RESTARTS_PER_HOUR = 5
 OVERNIGHT_POLL_SECONDS = 60
 OVERNIGHT_ARRIVAL_DAYS = 7
 # How long a night waits before its read is tried again, by why the last run
-# stopped. "done" and "cap": an hour, for comics added since or a limit
-# raised. "vision_unavailable": a quarter hour, a connector's rest. "error":
+# stopped. "done", "cap" and "budget": an hour, for comics added since or a
+# limit or budget raised. "vision_unavailable": a quarter hour, a connector's rest. "error":
 # an hour, so one broken comic does not run the plan every minute. A stop
 # by the worker, the window's end or an interrupted run are not listed: they
 # wait for nothing, and the window check decides.
-OVERNIGHT_RERUN_AFTER = {"done": 3600, "cap": 3600, "vision_unavailable": 900, "error": 3600}
+OVERNIGHT_RERUN_AFTER = {"done": 3600, "cap": 3600, "budget": 3600, "vision_unavailable": 900, "error": 3600}
 _OVERNIGHT_STOP = threading.Event()
 _OVERNIGHT_THREAD: threading.Thread | None = None
 _OVERNIGHT = threading.local()
@@ -18558,7 +18610,11 @@ def overnight_panel_pass(deadline: dt.datetime, *, now: Callable[[], dt.datetime
     settings = load_app_settings()
     night = overnight_night(clock(), int(settings["overnightPanelsStart"]))
     limit = int(settings["overnightVisionPages"])
+    budget = float(settings.get("overnightVisionBudget") or 0)
     used = store.overnight_vision_pages(night)
+
+    def over_budget() -> bool:
+        return budget > 0 and _vision_cost_view()["overnightSpent"] >= budget
     run_id = store.start_overnight_run(night)
     counts = {"comics": 0, "pagesRead": 0, "visionPages": 0, "localPages": 0, "skippedSettled": 0,
               "deferredComics": 0, "failedComics": 0}
@@ -18574,9 +18630,11 @@ def overnight_panel_pass(deadline: dt.datetime, *, now: Callable[[], dt.datetime
             if _OVERNIGHT_STOP.is_set() or clock() >= deadline:
                 break
             use_vision = bool(item["vision"]) and limit > 0
-            if use_vision and (used + _OVERNIGHT.vision_pages >= limit or not vision_model_ready()):
+            spent_out = use_vision and over_budget()
+            if use_vision and (used + _OVERNIGHT.vision_pages >= limit or spent_out or not vision_model_ready()):
                 counts["deferredComics"] += 1
-                deferred_why = deferred_why or ("cap" if used + _OVERNIGHT.vision_pages >= limit else "vision_unavailable")
+                deferred_why = deferred_why or ("cap" if used + _OVERNIGHT.vision_pages >= limit
+                                                else "budget" if spent_out else "vision_unavailable")
                 continue
             file_id = int(item["fileId"])
             try:
@@ -18676,6 +18734,26 @@ def start_overnight_panels_worker() -> threading.Thread:
     return _OVERNIGHT_THREAD
 
 
+def _vision_cost_view() -> dict[str, Any]:
+    """What a vision page costs -- measured when there are enough priced
+    calls to say, else the documented estimate -- and what the overnight
+    read has spent so far."""
+    store = catalog_store()
+    summary = store.vision_cost_summary()
+    measured = summary["perPage"] is not None and summary["measuredCalls"] >= 20
+    per_page = float(summary["perPage"]) if measured else VISION_PAGE_COST_ESTIMATE
+    # Nights read before calls were priced, at the estimate: counted, so a
+    # budget set after them knows what they took.
+    earlier = store.overnight_vision_pages_unpriced(summary["overnightSince"]) * VISION_PAGE_COST_ESTIMATE
+    # Calls with tokens but no list price (an OpenAI model, one not in
+    # VISION_PRICES_PER_MTOK) count at the page price, so a budget still holds.
+    earlier += summary["overnightUnpriced"] * per_page
+    return {"perPage": per_page, "measured": measured, "measuredCalls": summary["measuredCalls"],
+            "overnightSpent": round(summary["overnightSpent"] + earlier, 2),
+            "overnightMeasured": round(summary["overnightSpent"], 2), "overnightEstimatedBefore": round(earlier, 2),
+            "overnightSince": summary["overnightSince"]}
+
+
 def overnight_panels_status() -> dict[str, Any]:
     """Settings -> Reader and System: the read's settings, its last nights and
     what tonight would read."""
@@ -18689,6 +18767,9 @@ def overnight_panels_status() -> dict[str, Any]:
         "enabled": bool(settings.get("overnightPanels")),
         "start": int(settings["overnightPanelsStart"]), "end": int(settings["overnightPanelsEnd"]),
         "visionPages": int(settings["overnightVisionPages"]),
+        "visionBudget": int(settings.get("overnightVisionBudget") or 0),
+        "visionChoices": list(OVERNIGHT_VISION_CHOICES), "budgetChoices": list(OVERNIGHT_BUDGET_CHOICES),
+        "cost": _vision_cost_view(),
         "visionReady": vision_model_ready(),
         "runs": catalog_store().overnight_runs(7),
         "tonight": {"comics": len(plan), "bySource": tonight},

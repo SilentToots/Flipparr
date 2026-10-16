@@ -24,7 +24,9 @@ may see. It goes through the same `file_page_panels` path as an opened page,
 in the background lane, and skips pages whose reading is already final. An
 admin's comics go to the vision connector when it reads every page, up to a
 nightly page limit counted from the catalog's run rows so
-a restart does not reset it; once the limit is reached the remaining vision
+a restart does not reset it, and an optional overnight budget in dollars
+priced from each call's own token counts (`vision_usage`, schema 80); once
+either is reached the remaining vision
 comics wait for the next night rather than being read locally, because a
 local reading would be replaced by vision when the page is opened (panels
 must not change mid-read). Readers' comics are read locally unless readers'

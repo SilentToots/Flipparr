@@ -155,8 +155,14 @@ You lose manual corrections, aliases and request history — not files.
 
 ### Unreleased
 
-**Schema:** 79 (adds `overnight_panel_runs`, `duplicate_resolutions.state`,
-`revoked_sessions`). No change on disk.
+**Schema:** 80 (adds `overnight_panel_runs`, `duplicate_resolutions.state`,
+`revoked_sessions`, `vision_usage`). No change on disk.
+
+- *The overnight read's cost, shown and capped*: each vision call's tokens
+  and cost are kept (`vision_usage`), the nightly limits (now up to 5,000
+  pages) are shown with what they cost a night at the measured price a
+  page, and an overnight budget stops the read's vision once it has spent
+  that much, with what it has spent so far on the card.
 
 - *Signing out ends that device's session on the server* (`revoked_sessions`):
   before, the sign-out only expired the cookie, and Flipparr View's token sat

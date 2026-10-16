@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 79
+SCHEMA_VERSION = 80
 
 # What a merge let go of, said where the server's log can carry it (app.py
 # routes this logger into the structured log): the merged-away issue's rows
@@ -1726,6 +1726,24 @@ class CatalogStore:
                     detail_json TEXT
                 );
                 CREATE INDEX IF NOT EXISTS overnight_panel_runs_night ON overnight_panel_runs(night);
+                -- What each vision-model call used and cost (schema 80, the
+                -- owner, 2026-10-16): the provider's own token counts, priced
+                -- at the model's list price when it is known, and whether the
+                -- overnight read made it. What the nightly page limits and the
+                -- overnight budget in Settings > Reader are priced from,
+                -- measured rather than guessed.
+                CREATE TABLE IF NOT EXISTS vision_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    model TEXT,
+                    purpose TEXT,
+                    overnight INTEGER NOT NULL DEFAULT 0,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    cost_usd REAL,
+                    recorded_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS vision_usage_at ON vision_usage(recorded_at);
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_name TEXT NOT NULL,
@@ -5647,6 +5665,46 @@ class CatalogStore:
              "seriesTitle": row["series_title"], "seriesRunId": row["series_run_id"]}
             for row in rows
         ]
+
+    def record_vision_usage(self, provider: str, model: str | None, purpose: str | None, *, overnight: bool,
+                            input_tokens: int | None, output_tokens: int | None, cost_usd: float | None) -> None:
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO vision_usage(provider, model, purpose, overnight, input_tokens, output_tokens, cost_usd,
+                                            recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (provider, model, purpose, int(bool(overnight)), input_tokens, output_tokens, cost_usd, _utc_now()),
+            )
+
+    def vision_cost_summary(self, recent: int = 500) -> dict[str, Any]:
+        """The vision model's measured cost: the average of its last `recent`
+        priced panel calls (one call is one page, or half of a spread), and
+        what the overnight read has spent in all, since when."""
+        with self._connect() as connection:
+            average = connection.execute(
+                """SELECT AVG(cost_usd), COUNT(*) FROM (SELECT cost_usd FROM vision_usage
+                    WHERE cost_usd IS NOT NULL AND purpose='panels' ORDER BY id DESC LIMIT ?)""", (int(recent),),
+            ).fetchone()
+            overnight = connection.execute(
+                """SELECT COALESCE(SUM(cost_usd), 0), MIN(recorded_at), COUNT(*),
+                          COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0)
+                     FROM vision_usage WHERE overnight=1""",
+            ).fetchone()
+        return {"perPage": average[0], "measuredCalls": int(average[1] or 0),
+                "overnightSpent": float(overnight[0] or 0), "overnightSince": overnight[1],
+                "overnightCalls": int(overnight[2] or 0), "overnightUnpriced": int(overnight[3] or 0)}
+
+    def overnight_vision_pages_unpriced(self, since: str | None) -> int:
+        """The overnight read's vision pages from before its calls were priced
+        (vision_usage began with schema 80): every night's, when nothing has
+        been priced yet, else those that ended before the first priced call
+        (the night it began on is priced call by call)."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT COALESCE(SUM(vision_pages), 0) FROM overnight_panel_runs
+                    WHERE ? IS NULL OR COALESCE(ended_at, started_at) < ?""",
+                (since, since),
+            ).fetchone()
+        return int(row[0] or 0)
 
     def record_vision_answer(self, file_id: int | None, member: str, *, half: int = 0, provider: str | None,
                              outcome: str, drawn: list[dict[str, Any]], kept: list[dict[str, Any]] | None = None,

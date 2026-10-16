@@ -11935,6 +11935,7 @@ class OvernightWindowTests(unittest.TestCase):
         self.assertTrue(self._worker_tick(run("vision_unavailable", 1000)), "a quarter hour for the connector")
         self.assertFalse(self._worker_tick(run("done", 1800)))
         self.assertFalse(self._worker_tick(run("cap", 1800)))
+        self.assertFalse(self._worker_tick(run("budget", 1800)), "a budget spent waits for one raised")
         self.assertTrue(self._worker_tick(run("stopped", 10)), "a stop by the worker holds nothing back")
         self.assertTrue(self._worker_tick(run("interrupted", 10)))
         self.assertTrue(self._worker_tick({"night": "2026-10-14", "stopped": "error", "endedAt": ago(60)}),
@@ -11944,13 +11945,18 @@ class OvernightWindowTests(unittest.TestCase):
     def test_settings_take_only_the_hours_and_limits_offered(self):
         with tempfile.TemporaryDirectory() as folder, patch("app.settings_config_path", return_value=Path(folder) / "s.json"):
             for bad in ({"overnightPanelsStart": 24}, {"overnightPanelsEnd": -1}, {"overnightVisionPages": 50},
+                        {"overnightVisionPages": 4000}, {"overnightVisionBudget": 15}, {"overnightVisionBudget": True},
                         {"overnightPanelsStart": True}):
                 with self.assertRaises(ValueError):
                     app.save_app_settings(bad)
+            self.assertEqual(app.load_app_settings()["overnightVisionBudget"], 0, "no budget unless one is chosen")
             app.save_app_settings({"overnightPanelsStart": 22, "overnightVisionPages": 300})
             settings = app.load_app_settings()
             self.assertEqual((settings["overnightPanelsStart"], settings["overnightVisionPages"], settings["overnightPanels"]),
                              (22, 300, True))
+            app.save_app_settings({"overnightVisionPages": 5000, "overnightVisionBudget": 100})
+            settings = app.load_app_settings()
+            self.assertEqual((settings["overnightVisionPages"], settings["overnightVisionBudget"]), (5000, 100))
 
 
 class OvernightPanelTests(_ComicCopiesTestCase):
@@ -12022,6 +12028,91 @@ class OvernightPanelTests(_ComicCopiesTestCase):
         self.assertEqual((result["visionPages"], result["stopped"]), (0, "cap"), "the checkpoint counts")
         [_, first] = self.store.overnight_runs(2)
         self.assertEqual((first["id"], first["stopped"], bool(first["endedAt"])), (killed, "interrupted", True))
+
+    def _spent(self, cost, *, overnight=True, purpose="panels", times=1):
+        for _ in range(times):
+            self.store.record_vision_usage("anthropic", "claude-sonnet-5", purpose, overnight=overnight,
+                                           input_tokens=2000, output_tokens=100, cost_usd=cost)
+
+    def test_the_overnight_budget_stops_the_reads_vision_and_waits_for_one_raised(self):
+        self.settings["overnightVisionBudget"] = 10
+        self._spent(10.0)
+        self._spent(50.0, overnight=False)  # a page opened by hand is not the overnight read's spending
+        held = self._pass()
+        self.assertEqual((held["pagesRead"], held["deferredComics"], held["stopped"]), (0, 1, "budget"))
+        self.settings["overnightVisionBudget"] = 25
+        more = self._pass()
+        self.assertEqual((more["pagesRead"], more["stopped"]), (3, "done"))
+
+    def test_nights_read_before_pricing_count_toward_the_budget_at_the_estimate(self):
+        earlier = self.store.start_overnight_run("2026-10-13")
+        self.store.finish_overnight_run(earlier, stopped="cap", comics=9, pagesRead=2000, visionPages=2000, localPages=0,
+                                        skippedSettled=0, deferredComics=0, failedComics=0)
+        view = app._vision_cost_view()
+        self.assertEqual((view["overnightSpent"], view["overnightEstimatedBefore"], view["measured"]), (10.0, 10.0, False))
+        self.settings["overnightVisionBudget"] = 10
+        self.assertEqual(self._pass()["stopped"], "budget")
+        self._spent(0.004)  # pricing begins: the night counted at the estimate stays counted once
+        view = app._vision_cost_view()
+        self.assertEqual((view["overnightEstimatedBefore"], view["overnightSpent"]), (10.0, 10.0))
+
+    def test_the_price_a_page_is_measured_once_there_are_enough_pages(self):
+        self._spent(0.004, overnight=False, times=19)
+        self._spent(0.5, overnight=False, purpose="cover_rating")
+        self.assertEqual((app._vision_cost_view()["perPage"], app._vision_cost_view()["measured"]),
+                         (app.VISION_PAGE_COST_ESTIMATE, False), "19 pages: still the estimate")
+        self._spent(0.004, overnight=False)
+        view = app._vision_cost_view()
+        self.assertEqual((round(view["perPage"], 6), view["measured"], view["measuredCalls"]), (0.004, True, 20),
+                         "panel pages only: a cover rating is not a page")
+        status = app.overnight_panels_status()
+        self.assertEqual((status["visionChoices"][-1], status["budgetChoices"], status["visionBudget"]),
+                         (5000, [0, 10, 25, 50, 100, 200], 0))
+
+    def test_each_vision_call_is_kept_with_its_tokens_and_cost(self):
+        import io
+        answers = {
+            "anthropic": {"model": "claude-sonnet-5", "content": [{"type": "text", "text": "[]"}],
+                          "usage": {"input_tokens": 1000, "cache_read_input_tokens": 2000, "output_tokens": 100}},
+            "openai": {"model": "gpt-4o", "choices": [{"message": {"content": "[]"}}],
+                       "usage": {"prompt_tokens": 900, "completion_tokens": 80}},
+        }
+        opened = lambda request, *, timeout: io.BytesIO(json.dumps(
+            answers["anthropic" if "anthropic" in request.full_url else "openai"]).encode())
+        with patch("urllib.request.urlopen", side_effect=opened), patch("app._wait_for_provider_slot"), \
+             patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True):
+            with patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "a-key"}}):
+                app._OVERNIGHT.active = True
+                try:
+                    app.ask_vision_model(b"jpeg", "boxes?")
+                finally:
+                    app._OVERNIGHT.active = False
+                app.ask_vision_model(b"jpeg", "order?", purpose="panel_order")
+            with patch("app.load_provider_config", return_value={"openai": {"enabled": True, "apiKey": "o-key"}}):
+                app._OVERNIGHT.active = True
+                try:
+                    app.ask_vision_model(b"jpeg", "boxes?")
+                finally:
+                    app._OVERNIGHT.active = False
+        with self.store._connect() as connection:
+            rows = connection.execute("SELECT provider, model, purpose, overnight, input_tokens, output_tokens, cost_usd"
+                                      " FROM vision_usage ORDER BY id").fetchall()
+        priced = (1000 + 2000 * 0.1) * 2 / 1e6 + 100 * 10 / 1e6
+        self.assertEqual([tuple(row[:6]) for row in rows],
+                         [("anthropic", "claude-sonnet-5", "panels", 1, 3000, 100),
+                          ("anthropic", "claude-sonnet-5", "panel_order", 0, 3000, 100),
+                          ("openai", "gpt-4o", "panels", 1, 900, 80)])
+        self.assertAlmostEqual(rows[0][6], priced)
+        self.assertIsNone(rows[2][6], "no list price for it: tokens kept, cost not guessed")
+        view = app._vision_cost_view()
+        self.assertAlmostEqual(view["overnightMeasured"], round(priced, 2))
+        self.assertAlmostEqual(view["overnightSpent"], round(priced + app.VISION_PAGE_COST_ESTIMATE, 2),
+                               msg="an unpriced overnight call counts at the page price, so a budget still holds")
+        with patch.object(self.store, "record_vision_usage", side_effect=sqlite3.OperationalError("locked")), \
+             patch("urllib.request.urlopen", side_effect=opened), patch("app._wait_for_provider_slot"), \
+             patch.dict(app._PROVIDER_NEXT_REQUEST_AT, {}, clear=True), \
+             patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "a-key"}}):
+            self.assertEqual(app.ask_vision_model(b"jpeg", "boxes?"), "[]", "a record that fails never loses the answer")
 
     def test_the_window_closing_stops_the_night(self):
         result = self._pass(hour=6)

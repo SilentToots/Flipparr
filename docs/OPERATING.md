@@ -478,8 +478,15 @@ time -- set `TZ` in `.env`), Flipparr reads ahead the comics each profile is
 likely to open next: Keep Reading and each run's next issue, then issues that
 arrived in the last week, then comics downloaded to Flipparr View. An admin's
 comics go to the vision assistant when it reads every page, up to the
-nightly limit (1,000 pages by default, about $5 at Sonnet's price; "No vision
-overnight" uses Flipparr's own reading); readers' comics use Flipparr's own
+nightly limit (1,000 pages by default, up to 5,000; "No vision overnight"
+uses Flipparr's own reading). Each limit is shown with what it costs a
+night, priced from the vision model's own token counts on its last 500
+pages (about half a cent a page at Sonnet's price, the estimate used until
+20 pages are measured). An **overnight budget** ($10 to $200, none by
+default) stops the read's vision once it has spent that much in all, nights
+before pricing began counted at the estimate; the vision pages wait for a
+budget raised, and pages opened by hand are never held back by it. Every
+vision call's tokens and cost are kept in `vision_usage`. Readers' comics use Flipparr's own
 reading unless readers' pages are allowed. Pages already read are skipped,
 so a night left unfinished carries on the next. A page it has not reached is
 still read the moment it is opened. Each night's run -- pages read, how many
