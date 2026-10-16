@@ -35,6 +35,22 @@ vision pages, settled pages skipped, why it stopped), shown on Settings ›
 Reader and System. Pages it does not reach are read when opened, as before;
 nothing about the on-demand path changes.
 
+### Claude's answers are not refused for unvouched edges (2026-10-16)
+
+`tools/vision_model_test.py` sent 86 of the owner's hand-fixed pages to six
+Claude settings; `tools/vision_pipeline_replay.py` replayed the answers
+through variants of the step after the model, scored against his fixes and
+against 95 pages he accepted. Refusing an answer whose edges the page cannot
+vouch for (no bare gutter near them, typically art running into black
+between panels) cost the most: the local reading shown instead was further
+from his fixes. With that refusal off for Claude (`refine_vision_boxes(...,
+refuse_unverified=False)`), Sonnet 5.5 went 0.63 -> 0.78 mean IoU and Haiku
+5.5 0.66 -> 0.81, and none of the accepted pages changed. The ink-uncovered
+check stays (it changed nothing in the replay and keeps panel view from
+skipping art); OpenAI answers keep the refusal, which was made for
+gpt-4o-mini's guessed grids. A shorter snap reach and dropping the
+shrink-to-ink step were tried and dropped: they moved pages he had accepted.
+
 ## The benchmark
 
 `tools/panel_benchmark.py` runs the local tiers over every hand-fixed page

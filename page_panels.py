@@ -654,7 +654,8 @@ def merge_overlapping(boxes: list[dict[str, Any]], limit: float = VISION_OVERLAP
     return merged
 
 
-def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]], *,
+                        refuse_unverified: bool = True) -> list[dict[str, Any]] | None:
     """A model's boxes, made exact by the page itself -- or refused.
 
     A vision model reads a layout's structure well and its coordinates
@@ -671,6 +672,16 @@ def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[
     in an answer are the first and stand where the model put them, an
     answer full of them is a grid guessed over the art, and is refused
     whole. Better the quadrants than a confident wrong grid.
+
+    `refuse_unverified=False` keeps such an answer, every unvouched side
+    where the model drew it. Claude's answers are read that way since
+    2026-10-16: on 75 pages the owner fixed by hand, the refused ones were
+    nearer his fixes than the local reading that replaced them (Sonnet 5.5
+    0.63 -> 0.78 mean IoU, Haiku 5.5 0.66 -> 0.81,
+    tools/vision_pipeline_replay.py), and no page he had accepted changed.
+    A page whose art runs into black between panels has no bare line to
+    vouch for its edges, and that is the page a model is for. The grids
+    this refusal caught were gpt-4o-mini's.
     """
     width, height = mask.size
     min_area = width * height * PANEL_MIN_AREA
@@ -696,7 +707,7 @@ def refine_vision_boxes(mask: Image.Image, boxes: list[dict[str, Any]]) -> list[
             panels.append(settled)
     # One doubt is always allowed: a two-box answer whose shared edge a
     # caption runs across is not a guess.
-    if not panels or unverified > max(1, VISION_UNVERIFIED_MAX * 4 * len(boxes)):
+    if not panels or (refuse_unverified and unverified > max(1, VISION_UNVERIFIED_MAX * 4 * len(boxes))):
         return None
     return [
         {"x": x0 / width, "y": y0 / height, "w": (x1 - x0) / width, "h": (y1 - y0) / height}

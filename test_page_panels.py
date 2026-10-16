@@ -575,6 +575,8 @@ class VisionTierTests(unittest.TestCase):
         # crosses every panel in the left column.
         guess = [{"x": c / 3, "y": r / 2, "w": 1 / 3, "h": 1 / 2} for r in range(2) for c in range(3)]
         self.assertIsNone(refine_vision_boxes(mask, guess))
+        kept = refine_vision_boxes(mask, guess, refuse_unverified=False)
+        self.assertEqual(len(kept), 6, "asked to keep it (Claude's answers), the guess stands as drawn where the page is silent")
 
     def test_a_layout_is_ambiguous_when_panels_half_share_a_row(self):
         grid = [{"x": 0, "y": 0, "w": 0.5, "h": 0.5}, {"x": 0.5, "y": 0, "w": 0.5, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]

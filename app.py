@@ -15908,7 +15908,10 @@ def vision_panels(image: bytes, width: int, height: int, direction: str, mask: A
     if not panel_finder.accept_vision_boxes(boxes):
         told("refused", merged=len(boxes), why="too few")
         return None
-    refined = panel_finder.refine_vision_boxes(mask, boxes)
+    # Claude's edges stand where the page cannot vouch for them; another
+    # connector's answer full of such edges is still a guessed grid
+    # (refine_vision_boxes, 2026-10-16).
+    refined = panel_finder.refine_vision_boxes(mask, boxes, refuse_unverified=vision_provider() != "anthropic")
     if refined is None:
         told("refused", merged=len(boxes), why="edges unverifiable")
         return None

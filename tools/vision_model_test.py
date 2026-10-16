@@ -15,7 +15,9 @@ Asked for by the owner on 2026-10-16 ("is one model better than another
 specifically in Claude?"): Sonnet 5 as it runs, Sonnet 5 without thinking,
 Sonnet 5.5 with and without, and Haiku 5.5, at about $2 for ~90 pages.
 
-Run it inside the production container on a COPY of the catalog -- nothing
+Keep --out out of /config/tmp: the container empties it when it starts (a
+deploy took the first run's report). Run it inside the production container
+on a COPY of the catalog -- nothing
 it writes reaches the real one; the provider config is read for the key and
 never written:
 
@@ -157,6 +159,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         extra.update(fields)
                         calls.clear()
                         drawn.clear()
+                        # Named in the log too, so a run's answers can be matched to
+                        # their pages from the log alone (the 2026-10-16 run's could not).
+                        app.log_event("vision_model_test", fileId=file_id, member=member, config=name)
                         try:
                             boxes = app.vision_panels(detail_bytes, detail.size[0], detail.size[1], direction, mask)
                         except app.VisionUnavailable as exc:

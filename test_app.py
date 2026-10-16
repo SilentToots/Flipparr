@@ -7447,6 +7447,13 @@ class VisionConnectorTests(unittest.TestCase):
         guess = '[{"x1": 20, "y1": 20, "x2": 280, "y2": 110}, {"x1": 20, "y1": 110, "x2": 280, "y2": 430}]'
         with patch("app.ask_vision_model", return_value=guess):
             self.assertIsNone(app.vision_panels(b"jpeg", 300, 450, "ltr", mask), "an edge on ink is an edge the model made up")
+        # Claude's word stands where the page cannot vouch for it: on the
+        # owner's hand-fixed pages its refused answers were nearer his fixes
+        # than the local reading shown instead (2026-10-16).
+        with patch("app.ask_vision_model", return_value=guess), patch("app.vision_provider", return_value="anthropic"):
+            claude = app.vision_panels(b"jpeg", 300, 450, "ltr", mask)
+        self.assertEqual(len(claude), 2)
+        self.assertEqual(round(sorted(claude, key=lambda b: b["y"])[1]["y"] * 450), 110, "the unvouched edge where the model drew it")
         with patch("app.ask_vision_model", return_value="[]"):
             self.assertEqual(app.vision_panels(b"jpeg", 300, 450, "ltr", mask), [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}],
                              "no panels is an answer: the page is one panel, shown whole")
