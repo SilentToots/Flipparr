@@ -5675,14 +5675,16 @@ class CatalogStore:
                 (provider, model, purpose, int(bool(overnight)), input_tokens, output_tokens, cost_usd, _utc_now()),
             )
 
-    def vision_cost_summary(self, recent: int = 500) -> dict[str, Any]:
+    def vision_cost_summary(self, recent: int = 500, model: str | None = None) -> dict[str, Any]:
         """The vision model's measured cost: the average of its last `recent`
-        priced panel calls (one call is one page, or half of a spread), and
-        what the overnight read has spent in all, since when."""
+        priced panel calls (one call is one page, or half of a spread) --
+        one model's when `model` is given -- and what the overnight read has
+        spent in all, since when."""
         with self._connect() as connection:
             average = connection.execute(
                 """SELECT AVG(cost_usd), COUNT(*) FROM (SELECT cost_usd FROM vision_usage
-                    WHERE cost_usd IS NOT NULL AND purpose='panels' ORDER BY id DESC LIMIT ?)""", (int(recent),),
+                    WHERE cost_usd IS NOT NULL AND purpose='panels' AND (? IS NULL OR model=?)
+                    ORDER BY id DESC LIMIT ?)""", (model, model, int(recent)),
             ).fetchone()
             overnight = connection.execute(
                 """SELECT COALESCE(SUM(cost_usd), 0), MIN(recorded_at), COUNT(*),

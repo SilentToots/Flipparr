@@ -158,6 +158,13 @@ You lose manual corrections, aliases and request history — not files.
 **Schema:** 80 (adds `overnight_panel_runs`, `duplicate_resolutions.state`,
 `revoked_sessions`, `vision_usage`). No change on disk.
 
+- *Panel view asks Claude Haiku 5.5*, with room for a 2,048-token answer:
+  on the owner's hand-fixed pages it matched his fixes at least as well as
+  Sonnet 5.5, at a tenth of the price (about $0.0005 a page). Claude's
+  answers are no longer refused for edges the page cannot vouch for, and
+  the 230 stored pages that had been were re-read from their saved answers.
+  Repeated example pages are sent with prompt caching. `FLIPPARR_VISION_MODEL`
+  still chooses another model.
 - *Settings, easier to scan* (web and Flipparr View): every card says what
   it is for in one sentence, each switch in one line, and the rest waits
   under a closed "More about this"; what is set or happened reads as short

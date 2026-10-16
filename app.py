@@ -510,7 +510,15 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 # with his fixes 0.80 (mean IoU) against Sonnet 5's 0.66, at the same price,
 # with shorter answers and none cut off at max_tokens; Haiku 5.5 0.73 at a
 # twelfth of the price.
-VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-sonnet-5-5"
+# Measured once more the same afternoon on 97 fresh fixed pages through the
+# live pipeline: Haiku 5.5, given a 2,048-token answer, matched his fixes
+# 0.76 against Sonnet 5.5's 0.72, at a tenth of the price ($0.00045 a page
+# against $0.0044). At 1,024 tokens its thinking ran out on 10 of 97 pages,
+# hence VISION_MAX_TOKENS. The owner chose it.
+VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-haiku-5-5"
+# Room for a model that thinks before it answers (Haiku 5.5 and Sonnet 5.5
+# do by default): the answer is a few hundred tokens, the thinking as many.
+VISION_MAX_TOKENS = 2048
 OPENAI_API_BASE = "https://api.openai.com/v1"
 # gpt-4o-mini bills a page at ~37k tokens (images at 33x) and guessed a grid
 # through an eight-panel page; 4.1-mini is a tenth the tokens, says "no
@@ -15672,7 +15680,7 @@ def _vision_request(provider: str, credential: str, image: bytes, prompt: str,
         if examples:
             content[2 * len(examples) - 1]["cache_control"] = {"type": "ephemeral"}
         return f"{ANTHROPIC_API_BASE}/messages", json.dumps({
-            "model": VISION_MODEL, "max_tokens": 1024, "messages": [{"role": "user", "content": content}],
+            "model": VISION_MODEL, "max_tokens": VISION_MAX_TOKENS, "messages": [{"role": "user", "content": content}],
         }).encode()
     content = []
     for picture, text in pairs:
@@ -15712,8 +15720,13 @@ VISION_PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
 VISION_CACHE_READ_SHARE: dict[str, float] = {"claude-sonnet-5-5": 0.05, "claude-opus-5-5": 0.05}
 # What one vision page costs when nothing has been measured yet: a page sent
 # at reading size is a couple of thousand input tokens and a short answer,
-# about half a cent at Sonnet's price (docs/OPERATING.md).
+# about half a cent at Sonnet's price (docs/OPERATING.md), a twentieth of
+# that at Haiku 5.5's. Measured 2026-10-16 (tools/vision_model_test.py).
 VISION_PAGE_COST_ESTIMATE = 0.005
+VISION_PAGE_COST_ESTIMATES = {"claude-haiku-5-5": 0.00045, "claude-sonnet-5-5": 0.0044, "claude-sonnet-5": 0.005}
+# The nights before calls were priced (to 2026-10-16) were all read by
+# Sonnet 5, and are counted at its price.
+VISION_UNPRICED_MODEL = "claude-sonnet-5"
 
 
 def _vision_usage(provider: str, payload: dict[str, Any]) -> tuple[int | None, int | None, float | None, str]:
@@ -18794,13 +18807,18 @@ def _vision_cost_view() -> dict[str, Any]:
     calls to say, else the documented estimate -- and what the overnight
     read has spent so far."""
     store = catalog_store()
-    summary = store.vision_cost_summary()
+    # The page price is the model now asked's: another's calls (Sonnet
+    # before Haiku, 2026-10-16) would price tonight at last week's rate.
+    summary = store.vision_cost_summary(model=VISION_MODEL)
     measured = summary["perPage"] is not None and summary["measuredCalls"] >= 20
-    per_page = float(summary["perPage"]) if measured else VISION_PAGE_COST_ESTIMATE
-    # Nights read before calls were priced, at the page price -- measured
-    # once there is one (the estimate was half the real price, 2026-10-16):
-    # counted, so a budget set after them knows what they took.
-    earlier = store.overnight_vision_pages_unpriced(summary["overnightSince"]) * per_page
+    per_page = float(summary["perPage"]) if measured else VISION_PAGE_COST_ESTIMATES.get(VISION_MODEL, VISION_PAGE_COST_ESTIMATE)
+    # Nights read before calls were priced, at the price of the model that
+    # read them -- measured once there is one (the estimate was half the
+    # real price, 2026-10-16): counted, so a budget set after them knows
+    # what they took.
+    then = store.vision_cost_summary(model=VISION_UNPRICED_MODEL)
+    then_price = float(then["perPage"]) if then["perPage"] is not None and then["measuredCalls"] >= 20 else VISION_PAGE_COST_ESTIMATE
+    earlier = store.overnight_vision_pages_unpriced(summary["overnightSince"]) * then_price
     # Calls with tokens but no list price (an OpenAI model, one not in
     # VISION_PRICES_PER_MTOK) count at the page price, so a budget still holds.
     earlier += summary["overnightUnpriced"] * per_page

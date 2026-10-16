@@ -4048,9 +4048,9 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
             description="Optional: Claude or ChatGPT reads panels on your API key."
             more={<>
               <p>Each page is asked about once, sent as an image, and the page itself corrects the answer&rsquo;s edges. Nothing is sent while both are off.</p>
-              <p><strong>Ask about every page</strong>: off, the model is asked only about pages Flipparr could not read. On, its answer replaces Flipparr&rsquo;s own, which can be wrong while sure. About half a cent a page with Sonnet.</p>
+              <p><strong>Ask about every page</strong>: off, the model is asked only about pages Flipparr could not read. On, its answer replaces Flipparr&rsquo;s own, which can be wrong while sure. Under a tenth of a cent a page with Claude Haiku 5.5, the model Flipparr asks.</p>
               <p><strong>Readers&rsquo; pages too</strong>: off, other profiles read what Flipparr found itself, and every page you have already had read or fixed.</p>
-              <p>Measured on real pages, September 2026: Claude (Sonnet 5) read every layout tried, the hardest to within a few percent. ChatGPT (gpt-4.1-mini) is cheaper and cautious &mdash; it says &ldquo;no panels&rdquo; when unsure and merges panels rather than inventing them. Either way, Flipparr fits a model&rsquo;s boxes to the gutters it finds and refuses boxes that cross the art.</p>
+              <p>Measured on pages you fixed by hand, October 2026: Claude Haiku 5.5 came closest to your fixes, a little ahead of Sonnet 5.5 at a tenth of its price. In September, Claude (Sonnet 5) read every layout tried, the hardest to within a few percent. ChatGPT (gpt-4.1-mini) is cheaper and cautious &mdash; it says &ldquo;no panels&rdquo; when unsure and merges panels rather than inventing them. Either way, Flipparr fits a model&rsquo;s boxes to the gutters it finds and refuses boxes that cross the art.</p>
             </>}>
             {providers.filter((provider) => provider.kind === "reading").map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
             {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}

@@ -12076,9 +12076,9 @@ class OvernightPanelTests(_ComicCopiesTestCase):
         [_, first] = self.store.overnight_runs(2)
         self.assertEqual((first["id"], first["stopped"], bool(first["endedAt"])), (killed, "interrupted", True))
 
-    def _spent(self, cost, *, overnight=True, purpose="panels", times=1):
+    def _spent(self, cost, *, overnight=True, purpose="panels", times=1, model=None):
         for _ in range(times):
-            self.store.record_vision_usage("anthropic", "claude-sonnet-5", purpose, overnight=overnight,
+            self.store.record_vision_usage("anthropic", model or app.VISION_MODEL, purpose, overnight=overnight,
                                            input_tokens=2000, output_tokens=100, cost_usd=cost)
 
     def test_the_overnight_budget_stops_the_reads_vision_and_waits_for_one_raised(self):
@@ -12102,16 +12102,17 @@ class OvernightPanelTests(_ComicCopiesTestCase):
         self._spent(0.004)  # pricing begins: the night counted at the estimate stays counted once
         view = app._vision_cost_view()
         self.assertEqual((view["overnightEstimatedBefore"], view["overnightSpent"]), (10.0, 10.0))
-        self._spent(0.01, overnight=False, times=20)  # enough pages measured: the earlier nights at the real price
+        self._spent(0.01, overnight=False, times=20, model="claude-sonnet-5")  # the model those nights were read by, measured
         view = app._vision_cost_view()
-        self.assertTrue(view["measured"])
-        self.assertAlmostEqual(view["overnightEstimatedBefore"], round(2000 * view["perPage"], 2), places=2)
+        self.assertAlmostEqual(view["overnightEstimatedBefore"], 20.0, places=1, msg="the earlier nights at Sonnet 5's real price")
+        self.assertEqual(view["perPage"], app.VISION_PAGE_COST_ESTIMATES[app.VISION_MODEL],
+                         "tonight's price is the model now asked's: Sonnet's calls do not set it")
 
     def test_the_price_a_page_is_measured_once_there_are_enough_pages(self):
         self._spent(0.004, overnight=False, times=19)
         self._spent(0.5, overnight=False, purpose="cover_rating")
         self.assertEqual((app._vision_cost_view()["perPage"], app._vision_cost_view()["measured"]),
-                         (app.VISION_PAGE_COST_ESTIMATE, False), "19 pages: still the estimate")
+                         (app.VISION_PAGE_COST_ESTIMATES[app.VISION_MODEL], False), "19 pages: still the estimate")
         self._spent(0.004, overnight=False)
         view = app._vision_cost_view()
         self.assertEqual((round(view["perPage"], 6), view["measured"], view["measuredCalls"]), (0.004, True, 20),
@@ -12180,7 +12181,7 @@ class OvernightPanelTests(_ComicCopiesTestCase):
         self.assertIsNone(rows[2][6], "no list price for it: tokens kept, cost not guessed")
         view = app._vision_cost_view()
         self.assertAlmostEqual(view["overnightMeasured"], round(priced, 2))
-        self.assertAlmostEqual(view["overnightSpent"], round(priced + app.VISION_PAGE_COST_ESTIMATE, 2),
+        self.assertAlmostEqual(view["overnightSpent"], round(priced + view["perPage"], 2),
                                msg="an unpriced overnight call counts at the page price, so a budget still holds")
         with patch.object(self.store, "record_vision_usage", side_effect=sqlite3.OperationalError("locked")), \
              patch("urllib.request.urlopen", side_effect=opened), patch("app._wait_for_provider_slot"), \
