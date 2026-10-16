@@ -50,7 +50,8 @@ image from a checkout instead of pulling it, use `compose.build.yaml`
 
 | Mount | Mode | Purpose |
 | --- | --- | --- |
-| `/config` | read-write | database, settings, credentials, caches. **This is the only thing you need to back up** (see [Backup and restore](#backup-and-restore) for what is in it). |
+| `/config` | read-write | database, settings, credentials. **This is the only thing you need to back up** (see [Backup and restore](#backup-and-restore) for what is in it). |
+| `/cache` | read-write | rendered pages and covers, packed comics, the unpack and temp folders: all rebuilt on demand, kept apart from `/config` so a backup of it stays small. A named volume (`flipparr-cache`) unless `CACHE_PATH` names a folder of yours. Never needs backing up. |
 | `/comics` | read-write | your library. Written to when a completed download is imported, and when replacing a file moves the original into `.flipparr/quarantine/`. Scanning only reads. |
 | `/downloads/complete/comics` | read-write | where SABnzbd puts finished files. Writable so a download's folder is removed once its comic is verified in the library (SABnzbd keeps the files otherwise); only the one folder SABnzbd reported for that job is ever removed. |
 | `/downloads/torrents/complete/comics` | read-only | qBittorrent's comics category folder (optional; `TORRENT_COMPLETE_PATH`). Torrents keep seeding from it after import, so Flipparr never writes there; only qBittorrent removes anything. |
@@ -88,12 +89,13 @@ All settings have working defaults; you only need these if you are changing path
 | `FLIPPARR_METRON_MIN_INTERVAL_SECONDS` | `3.2` | Metron documents 20 requests/minute |
 | `FLIPPARR_COMIC_VINE_MIN_INTERVAL_SECONDS` | `1.1` | Comic Vine burst control |
 | `FLIPPARR_HTTP_THREADS` | `32` | worker threads answering requests (4-128) |
-| `FLIPPARR_COVER_CACHE_MB` | `512` | covers kept in `/config/cover-cache` so a restart does not re-read every cover; least recently used dropped first |
-| `FLIPPARR_READING_CACHE_MB` | `4096` | reading-size pages kept in `/config/reading-cache`, so a page turned to again is not rendered again; least recently used dropped first |
-| `FLIPPARR_PACKAGE_CACHE_MB` | `4096` | comics packed for Flipparr View to download (one file each), kept in `/config/package-cache` so a second device or a retry costs nothing |
+| `FLIPPARR_CACHE_DIR` | `/cache` (compose); *(unset: beside the database)* | where the regenerable caches below, the unpack folder and the temp folder live. The compose file gives it a volume of its own so none of it is in `/config`; an install from before 2026-10-16 that keeps the old compose has them in `/config` still (see [Backup and restore](#backup-and-restore)) |
+| `FLIPPARR_COVER_CACHE_MB` | `512` | covers kept in `<cache>/cover-cache` so a restart does not re-read every cover; least recently used dropped first |
+| `FLIPPARR_READING_CACHE_MB` | `4096` | reading-size pages kept in `<cache>/reading-cache`, so a page turned to again is not rendered again; least recently used dropped first |
+| `FLIPPARR_PACKAGE_CACHE_MB` | `4096` | comics packed for Flipparr View to download (one file each), kept in `<cache>/package-cache` so a second device or a retry costs nothing |
 | `FLIPPARR_CPUS` | *(detected)* | how many CPUs Flipparr's heavy work may use. Detected from the container's CPU limit when it has one, else the machine's; set it to keep Flipparr to fewer. People reading get half, downloads and other bulk work a quarter, so reading never waits behind a download |
 | `FLIPPARR_LOG_DIR` | `/config/logs` | where the log is kept as well as the console (`flipparr.log`, then `.1` to `.4`, 10 MB each, oldest dropped) |
-| `FLIPPARR_TEMP_DIR` | *(unset: `/config/tmp`)* | where temporary files go (uploads while they arrive, comic packs being unpacked). Flipparr makes a `flipparr-tmp` folder inside the folder you name and empties only that at start |
+| `FLIPPARR_TEMP_DIR` | *(unset: `<cache>/tmp`)* | where temporary files go (uploads while they arrive, comic packs being unpacked). Flipparr makes a `flipparr-tmp` folder inside the folder you name and empties only that at start |
 
 Flipparr is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/).
 A connection that goes quiet is closed after 30 seconds, up to 1,000 can be
@@ -537,10 +539,18 @@ What is in it, and what you may leave out:
   `acquisition-services.json`: settings and **credentials** (your password
   hash and session secret, provider and download-client keys). Keep the
   archive as private as the folder.
-- `cover-cache/`, `reading-cache/`, `tmp/`, `downloads/`: caches and files in
-  flight, up to a few gigabytes, all rebuilt on demand. Safe to exclude
-  (`--exclude=cover-cache --exclude=reading-cache --exclude=tmp
-  --exclude=downloads`).
+- `downloads/`: downloads in flight and, for a day after, the files of jobs
+  just finished; a refused download kept as evidence stays its week. Safe to
+  exclude (`--exclude=downloads`).
+- `cover-cache/`, `reading-cache/`, `package-cache/`, `unpack/`, `tmp/`: only
+  in an install from before 2026-10-16 that kept its old compose file. Since
+  then these live in the `/cache` volume (`FLIPPARR_CACHE_DIR`), which never
+  needs backing up. If they are still in your `/config`, either exclude them
+  (`--exclude=cover-cache --exclude=reading-cache --exclude=package-cache
+  --exclude=unpack --exclude=tmp`) or take the current `compose.yaml`, start
+  Flipparr once (it fills `/cache` as pages are read again) and delete the
+  five folders from `/config`. Up to eight gigabytes between them at the
+  default limits; 3.7 GB of one 4 GB config folder were these.
 - `logs/`: the log, at most 50 MB (five files of 10 MB, the oldest dropped).
   Safe to exclude (`--exclude=logs`); keep it when the backup is for a
   report of something that went wrong.

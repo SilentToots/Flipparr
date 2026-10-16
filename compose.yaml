@@ -38,6 +38,10 @@ services:
       FLIPPARR_ACQUISITION_CONFIG: /config/acquisition-services.json
       FLIPPARR_SETTINGS_CONFIG: /config/settings.json
       FLIPPARR_AUTH_CONFIG: /config/auth.json
+      # Rendered pages and covers, packed comics, unpack and temp folders:
+      # all rebuilt on demand, so they live in their own volume and never in
+      # the folder you back up (docs/OPERATING.md, "Backup and restore").
+      FLIPPARR_CACHE_DIR: /cache
       # Addresses or networks (CIDR) whose X-Forwarded-For may be believed. Set
       # this to the reverse proxy's Docker network subnet when running behind
       # one -- not its container address, which changes across restarts --
@@ -54,6 +58,10 @@ services:
       FLIPPARR_MIN_FREE_SPACE_MB: "${MIN_FREE_SPACE_MB:-100}"
     volumes:
       - "${CONFIG_PATH:-./docker-data}:/config"
+      # Caches, apart from the config so a backup of /config stays small. A
+      # named volume by default (the image makes /cache for user 1000); set
+      # CACHE_PATH to a folder of your own to see and exclude it yourself.
+      - "${CACHE_PATH:-flipparr-cache}:/cache"
       - "${COMICS_PATH:?Set COMICS_PATH to the NAS comics directory}:/comics:rw"
       # Writable so a download is removed once its comic is verified in the
       # library: SABnzbd drops a finished job from its history but keeps its
@@ -82,3 +90,6 @@ services:
 # To put Flipparr on a network your reverse proxy or download clients share,
 # add a compose.override.yaml beside this file (docs/OPERATING.md, "Behind a
 # reverse proxy"); nothing here assumes one.
+
+volumes:
+  flipparr-cache:

@@ -2486,6 +2486,16 @@ def remove_uploaded_cover(kind: str, entity_id: int | str) -> None:
         pass
 
 
+def cache_root() -> Path:
+    """Where the regenerable caches live: rendered pages and covers, packed
+    comics, the unpack and temp folders. FLIPPARR_CACHE_DIR, which the image's
+    compose file points at its own `/cache` volume so none of it sits in the
+    one folder people back up; unset (an install from before 2026-10-16, or
+    a bare `python app.py`), beside the database as before. Each cache's own
+    variable (FLIPPARR_READING_CACHE and the rest) still wins for that one."""
+    return _configured_path("CACHE_DIR", catalog_database_path().parent)
+
+
 def reading_cache_dir() -> Path:
     """Where rendered reading pages are kept, beside the catalog.
 
@@ -2494,23 +2504,23 @@ def reading_cache_dir() -> Path:
     rather than a constant so a caller that sets its environment after
     importing this module is still heard.
     """
-    return _configured_path("READING_CACHE", catalog_database_path().parent / "reading-cache")
+    return _configured_path("READING_CACHE", cache_root() / "reading-cache")
 
 
 def cover_cache_dir() -> Path:
-    return _configured_path("COVER_CACHE", catalog_database_path().parent / "cover-cache")
+    return _configured_path("COVER_CACHE", cache_root() / "cover-cache")
 
 
 def package_cache_dir() -> Path:
     """Where comics packed for Flipparr View are kept (`build_offline_package`)."""
-    return _configured_path("PACKAGE_CACHE", catalog_database_path().parent / "package-cache")
+    return _configured_path("PACKAGE_CACHE", cache_root() / "package-cache")
 
 
 def unpack_work_dir() -> Path:
     """Where a comic is unpacked once to be packed or converted. On the config
     volume, not /tmp: the container's /tmp is a small tmpfs, and a comic can
     be 200 MB."""
-    return _configured_path("UNPACK_DIR", catalog_database_path().parent / "unpack")
+    return _configured_path("UNPACK_DIR", cache_root() / "unpack")
 
 
 # A comic a person fetched themselves. Larger than any single issue needs, and
@@ -10199,6 +10209,42 @@ def _discard_kept_downloads(
     return len(kept)
 
 
+# How long a finished job's staged files stay before the sweep below takes
+# them: a day, so a job fulfilled or cancelled a moment ago can still be
+# looked at, and nothing is swept under an import that is settling.
+STAGING_KEEP_DAYS = 1
+
+
+def discard_finished_staging(store: Any, *, older_than_days: float = STAGING_KEEP_DAYS) -> int:
+    """Remove the staged files of jobs done with them (downloads/direct_site
+    and downloads/manual, one folder a job): the job fulfilled, cancelled or
+    gone, no download of it in flight, no refusal of it kept as evidence,
+    and the folder older than a day. Nothing removed them before (the
+    backup growth of 2026-10-16: 330 MB of September's imports and
+    October's cancellations sat in the config folder). Returns how many went."""
+    removed = 0
+    cutoff = time.time() - older_than_days * 86400
+    for source in ("direct_site", "manual"):
+        try:
+            entries = list(os.scandir(acquisition_staging_dir(source)))
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=False) or entry.stat().st_mtime > cutoff:
+                    continue
+            except OSError:
+                continue
+            if store.staging_in_use(int(entry.name)):
+                continue
+            shutil.rmtree(entry.path, ignore_errors=True)
+            removed += 1
+            log_event("download_staging_removed", source=source, jobId=int(entry.name))
+    return removed
+
+
 def _release_seeded_torrents(store: Any) -> int:
     """Remove the torrents Flipparr has finished with, and their files.
 
@@ -10381,6 +10427,10 @@ def acquisition_import_worker(stop_event: threading.Event = _IMPORT_STOP) -> Non
                 _release_seeded_torrents(catalog_store())
             except Exception as exc:
                 log_exception("seeded_torrent_sweep_failed", exc, level="warning")
+            try:
+                discard_finished_staging(catalog_store())
+            except Exception as exc:
+                log_exception("staging_sweep_failed", exc, level="warning")
         try:
             downloads = catalog_store().pending_acquisition_downloads()
             imported_any = False
@@ -23679,7 +23729,7 @@ def serving_temp_dir() -> Path | None:
     write, as in a container started without its volume. The server still
     starts and says what is wrong; large uploads then fall back on /tmp."""
     chosen = _env("TEMP_DIR")
-    folder = Path(chosen) / "flipparr-tmp" if chosen else catalog_database_path().parent / "tmp"
+    folder = Path(chosen) / "flipparr-tmp" if chosen else cache_root() / "tmp"
     try:
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True, exist_ok=True)

@@ -12855,3 +12855,60 @@ class FirstPanelReadExtractionTests(_ComicCopiesTestCase):
                 connection.execute("DELETE FROM page_panels WHERE file_id=?", (file_id,))
             app.file_page_panels(file_id, 1)
         self.assertEqual(extractions, [], "cached renders and a stored fingerprint: the archive is not opened")
+
+
+class CacheRootTests(unittest.TestCase):
+    """The regenerable caches live where FLIPPARR_CACHE_DIR says -- the
+    image's compose points it at a volume of its own, so a backup of /config
+    stays small (2026-10-16: 3.7 GB of 4 GB were caches) -- and beside the
+    database when it is unset, as every install from before has them."""
+
+    def test_caches_sit_beside_the_database_unless_a_cache_dir_is_named(self):
+        with patch("app.catalog_database_path", return_value=Path("/data/config/flipparr.db")):
+            with patch.dict(os.environ, {}, clear=False):
+                for name in ("FLIPPARR_CACHE_DIR", "FLIPPARR_READING_CACHE", "FLIPPARR_COVER_CACHE", "FLIPPARR_PACKAGE_CACHE", "FLIPPARR_UNPACK_DIR"):
+                    os.environ.pop(name, None)
+                self.assertEqual(app.cache_root(), Path("/data/config"))
+                self.assertEqual(app.reading_cache_dir(), Path("/data/config/reading-cache"))
+                self.assertEqual(app.package_cache_dir(), Path("/data/config/package-cache"))
+            with patch.dict(os.environ, {"FLIPPARR_CACHE_DIR": "/cache"}):
+                os.environ.pop("FLIPPARR_READING_CACHE", None)
+                self.assertEqual(app.reading_cache_dir(), Path("/cache/reading-cache"))
+                self.assertEqual(app.cover_cache_dir(), Path("/cache/cover-cache"))
+                self.assertEqual(app.package_cache_dir(), Path("/cache/package-cache"))
+                self.assertEqual(app.unpack_work_dir(), Path("/cache/unpack"))
+            with patch.dict(os.environ, {"FLIPPARR_CACHE_DIR": "/cache", "FLIPPARR_READING_CACHE": "/fast/pages"}):
+                self.assertEqual(app.reading_cache_dir(), Path("/fast/pages"), "a cache's own variable still wins")
+                self.assertEqual(app.cover_cache_dir(), Path("/cache/cover-cache"))
+
+
+class StagingSweepTests(unittest.TestCase):
+    """Staged download folders go once their job is done with them."""
+
+    def test_finished_staging_goes_after_a_day_and_nothing_spoken_for_does(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for source in ("direct_site", "manual"):
+                (root / source).mkdir()
+            old = time.time() - 3 * 86400
+            def staged(source, job, age=old):
+                path = root / source / str(job)
+                path.mkdir()
+                (path / "comic.cbz").write_bytes(b"x")
+                os.utime(path, (age, age))
+                return path
+            done = staged("direct_site", 1)
+            fresh = staged("direct_site", 2, age=time.time())
+            live = staged("direct_site", 3)
+            manual_done = staged("manual", 4)
+            stray = root / "direct_site" / "not-a-job"
+            stray.mkdir()
+            store = Mock()
+            store.staging_in_use.side_effect = lambda job_id: job_id == 3
+            with patch("app.acquisition_staging_dir", side_effect=lambda source="manual": root / source):
+                self.assertEqual(app.discard_finished_staging(store), 2)
+            self.assertFalse(done.exists(), "fulfilled, cancelled or gone, and a day old: removed")
+            self.assertFalse(manual_done.exists())
+            self.assertTrue(fresh.exists(), "finished an hour ago: left for a look")
+            self.assertTrue(live.exists(), "spoken for: kept")
+            self.assertTrue(stray.exists(), "not a job's folder: never touched")

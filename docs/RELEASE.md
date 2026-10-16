@@ -204,6 +204,15 @@ You lose manual corrections, aliases and request history — not files.
   fetch is packed again with a wait, not a 500; where two merged issues
   both carry a profile's rating or a chosen cover, the newer stands (the
   target's stood whatever its date), and the one let go is said in the log.
+- **Caches have a volume of their own.** The compose file mounts `/cache`
+  (a named volume, or `CACHE_PATH`) and sets `FLIPPARR_CACHE_DIR` to it:
+  rendered pages and covers, packed comics, the unpack and temp folders no
+  longer sit in `/config`, the folder the guide says to back up (one such
+  folder was 4 GB, 3.7 GB of it caches). Unset, they stay beside the database
+  as before; the old folders in `/config` can be deleted once `/cache` is in
+  use (OPERATING.md, "Backup and restore"). Staged download files of jobs
+  fulfilled, cancelled or gone are now removed a day later; nothing removed
+  them before, and 330 MB of them had gathered since September.
 - Performance, from the same review (Tier C): the catalog's cache and ETag
   are stamped with a catalog generation that moves only on writes to the
   tables the catalog is made from -- a page turn, a page's fingerprint or

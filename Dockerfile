@@ -88,6 +88,11 @@ ENV FLIPPARR_BUILD=${FLIPPARR_BUILD} \
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes zlib1g libbz2-1.0 liblzma5 libzstd1 liblz4-1 \
  && rm -rf /var/lib/apt/lists/*
+# The caches' own volume (compose mounts it at /cache): made here, owned by
+# the uid the container runs as, so a named volume comes up writable rather
+# than root's -- Docker gives a new named volume the image's ownership of
+# the folder it mounts over.
+RUN mkdir -p /cache && chown 1000:1000 /cache
 COPY --from=libarchive-build /out/bin/bsdtar /usr/local/bin/bsdtar
 COPY --from=libarchive-build /out/lib/libarchive.so.13 /usr/local/lib/libarchive.so.13
 

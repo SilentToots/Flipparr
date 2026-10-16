@@ -6754,3 +6754,28 @@ class CatalogGenerationTests(LibraryFixture):
             with store._write_lock, store._connect() as connection:
                 connection.execute("UPDATE files SET updated_at='later' WHERE id=?", (int(file_id),))
             self.assertGreater(store.catalog_generation(), moved, "a file row is the catalog's")
+
+
+class StagingInUseTests(LibraryFixture):
+    """Whether a job's staged download files are still spoken for (the sweep
+    in app.discard_finished_staging asks before it removes a folder)."""
+
+    def test_a_live_job_an_import_in_flight_or_kept_evidence_speaks_for_its_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._three_files(Path(folder))
+            now = _utc_now()
+            with sqlite3.connect(store.database_path) as raw:   # no foreign keys: fixture rows
+                for job_id, status in ((1, "fulfilled"), (2, "cancelled"), (3, "grabbed"), (4, "failed"), (5, "fulfilled"), (6, "cancelled")):
+                    raw.execute("INSERT INTO acquisition_jobs(id, request_id, issue_id, status, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?)",
+                                (job_id, job_id, status, now, now))
+                raw.execute("""INSERT INTO acquisition_downloads(job_id, sab_nzo_id, source, release_title, status, created_at, updated_at)
+                               VALUES (5, 'nzo-5', 'direct_site', 'x', 'importing', ?, ?)""", (now, now))
+                raw.execute("""INSERT INTO acquisition_release_failures(job_id, release_key, release_title, sab_storage, created_at, updated_at)
+                               VALUES (6, 'k', 'x', '/config/downloads/direct_site/6', ?, ?)""", (now, now))
+            self.assertFalse(store.staging_in_use(1), "fulfilled: done with its files")
+            self.assertFalse(store.staging_in_use(2), "cancelled: done with its files")
+            self.assertTrue(store.staging_in_use(3), "grabbed: live")
+            self.assertTrue(store.staging_in_use(4), "failed: the admin may look at its files")
+            self.assertTrue(store.staging_in_use(5), "fulfilled, but an import of it is settling")
+            self.assertTrue(store.staging_in_use(6), "cancelled, but a refusal is kept as evidence")
+            self.assertFalse(store.staging_in_use(99), "no such job: nothing speaks for the folder")

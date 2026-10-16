@@ -10030,6 +10030,29 @@ class CatalogStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def staging_in_use(self, job_id: int) -> bool:
+        """Whether a job's staged download files (downloads/<source>/<job>)
+        are still spoken for: the job is live -- anything but fulfilled or
+        cancelled, a failed one included, whose files the admin may look at
+        -- a download of it is on its way or being imported, or a refusal of
+        it is kept as evidence (sab_storage). A job that no longer exists
+        speaks for nothing."""
+        with self._connect() as connection:
+            job = connection.execute("SELECT status FROM acquisition_jobs WHERE id=?", (int(job_id),)).fetchone()
+            if job is not None and job["status"] not in ("fulfilled", "cancelled"):
+                return True
+            active = connection.execute(
+                """SELECT 1 FROM acquisition_downloads WHERE job_id=?
+                      AND status IN ('queued', 'downloading', 'completed', 'importing', 'waiting_for_files')""",
+                (int(job_id),),
+            ).fetchone()
+            if active is not None:
+                return True
+            evidence = connection.execute(
+                "SELECT 1 FROM acquisition_release_failures WHERE job_id=? AND sab_storage IS NOT NULL", (int(job_id),),
+            ).fetchone()
+            return evidence is not None
+
     def kept_refused_downloads(
         self, *, job_id: int | None = None, older_than_days: int | None = None,
     ) -> list[dict[str, Any]]:
