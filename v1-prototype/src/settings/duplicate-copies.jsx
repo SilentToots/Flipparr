@@ -49,10 +49,9 @@ export function DuplicateCopies({ onChanged }) {
     }
   }
   const setAside = plan.reduce((count, row) => count + row.others.length, 0);
-  return <SettingsCard title="Duplicate copies">
-    <p className="settings-card-lead">{issues.length
-      ? `${issues.length} ${issues.length === 1 ? "issue has" : "issues have"} more than one copy. Flipparr keeps one copy per issue; the others are moved to .flipparr/duplicates in the library folder, never deleted. What you have read, rated or fixed stays with the issue.`
-      : "Every issue has one copy."}</p>
+  return <SettingsCard title="Duplicate copies"
+    description={issues.length ? `${issues.length} ${issues.length === 1 ? "issue has" : "issues have"} more than one copy. Flipparr keeps one of each.` : "Every issue has one copy."}
+    more={issues.length ? <p>The other copies are moved to .flipparr/duplicates in the library folder, never deleted. What you have read, rated or fixed stays with the issue.</p> : null}>
     {result ? <p className="settings-card-note" role="status">{result}</p> : null}
     {issues.length ? <details>
       <summary className="settings-card-note">Show the {issues.length} {issues.length === 1 ? "issue" : "issues"}</summary>

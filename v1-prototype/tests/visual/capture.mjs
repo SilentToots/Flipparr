@@ -199,7 +199,7 @@ for (const { suffix, width, height } of VIEWPORTS) {
   const work = [
     ...states.map((s) => [s, APP]),
     ...backendStates.map((s) => [s, BACKEND]),
-  ].filter(([state]) => !suffix || state.phone !== false)
+  ].filter(([state]) => (suffix ? state.phone !== false : state.desktop !== false))
     .filter(([state]) => !only.length || only.includes(state.name));
   for (const [state, origin] of work) {
     const name = state.name + suffix;

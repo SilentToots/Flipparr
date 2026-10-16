@@ -135,7 +135,7 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   the accent at 40% (`--badge-violet-bg`, `--badge-muted-bg`) or solid
   (`--badge-green-bg`, `--badge-amber-bg`, `--badge-red-bg`), with white type.
   New status labels use `StatusBadge` with a tone.
-- **Page tabs** (Pull List, Settings) are `SegmentedTabs`, after iOS 26's
+- **Page tabs** (the Pull List) are `SegmentedTabs`, after iOS 26's
   segmented control: a pill track on `--surface`, 14px semibold tabs 36px
   tall inside a 4px inset, and the glass thumb (`.glass-indicator`) sliding to
   the open one. A row wider than the screen scrolls inside the pill and the
@@ -186,11 +186,30 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   listed down its left (the open one a violet-soft pill, Library health's
   count as a red badge) and the open section's title, a line on what it
   holds, then its blocks as titled `SettingsCard`s with an optional action at
-  the title's end. `/settings` opens Library health. On a phone it is two
-  levels, as iPhone Settings: `/settings` is `SettingsIndex` (grouped rounded
-  rows of an icon tile, the name, what is set and a chevron), and each
+  the title's end. `/settings` opens Library health for the admin and Your
+  profile for a reader. On a phone it is two levels, as iPhone Settings:
+  `/settings` is `SettingsIndex` (grouped rounded rows of an icon tile, the
+  name with one line of what is set under it, and a chevron), and each
   section opens as its own page with a back button; tapping the Settings tab
-  inside a section returns to the list.
+  inside a section returns to the list. Flipparr View's Settings is the same
+  shell with its own sections.
+- **Settings cards and copy** (the owner, 2026-10-16: "very tight and overly
+  complicated with long paragraphs"; after Android's settings guidelines,
+  Apple's HIG, NN/g on progressive disclosure and GOV.UK on hint text). A
+  `SettingsCard` reads: its title; `description`, **one sentence of at most
+  20 words** on what the card is for; its controls; what is set or happened
+  as `SettingsFacts` (label over value), never as a sentence; its buttons;
+  and last `more`, a closed **More about this** (`SettingsMore`) holding
+  everything a person may want to know but need not scan. A `Toggle`'s or a
+  `SettingsField`'s hint is **one sentence of at most 15 words** saying what
+  changes, not how it works; the switch's accessible name is its title
+  alone, the hint its description. Every non-switch control is a
+  `SettingsField` with its label on screen. Everything in a card is one
+  12px step apart (`--settings-card-gap`); switch rows under each other keep
+  their shared rule and no gap. Most-changed settings come first; three or
+  more rarely used ones can go under one Advanced disclosure.
+  `tests/design-system.test.mjs` fails on a literal description or hint
+  over its limit.
 - **System** (since 2026-10-05, admin only), before About: a facts grid
   (`system-facts`, label over value), then Background work, Waiting work and
   Recent problems as `about-list` rows whose head (`system-row-head`) is the

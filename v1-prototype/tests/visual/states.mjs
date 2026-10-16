@@ -294,6 +294,16 @@ export const states = [
   { name: "settings", path: "/settings/library", require: [".settings-shell"] },
   { name: "settings-reader", path: "/settings/reader", require: [".settings-card"] },
   { name: "settings-acquisition", path: "/settings/acquisition", require: [".settings-card"] },
+  // Every other section, and the phone's index (2026-10-16, the settings
+  // pass: copy, spacing and grouping changed in all of them).
+  { name: "settings-index", path: "/settings", require: [".settings-index"], desktop: false },
+  { name: "settings-profile", path: "/settings/profile", require: [".settings-card"] },
+  { name: "settings-matching", path: "/settings/matching", require: [".settings-card"] },
+  { name: "settings-metadata", path: "/settings/metadata", require: [".settings-card"] },
+  { name: "settings-profiles", path: "/settings/profiles", require: [".settings-card"] },
+  { name: "settings-security", path: "/settings/security", require: [".settings-card"] },
+  { name: "settings-system", path: "/settings/system", require: [".settings-card"] },
+  { name: "settings-about", path: "/settings/about", require: [".settings-card"] },
   // The folders panel only renders once the catalog has loaded; the header
   // alone let a capture land on "0 Files" and a page 120px shorter.
   { name: "import", path: "/import", require: [".page-header", ".library-sources-panel"], phone: false },

@@ -13,7 +13,6 @@ import {
   CaretRight,
   Heartbeat,
   LockSimple,
-  Sparkle,
   ArrowUpRight,
   ArrowLeft,
   ArrowRight,
@@ -47,7 +46,7 @@ import { LoadingIndicator } from "./components/LoadingIndicator";
 import { Button } from "./components/Button";
 import { StatusBadge } from "./components/StatusBadge";
 import { ReadState } from "./components/ReadState.jsx";
-import { SettingsCard, Toggle } from "./components/SettingsControls.jsx";
+import { SettingsCard, SettingsFacts, SettingsField, Toggle } from "./components/SettingsControls.jsx";
 import { PinPad, ProfileAvatar, ProfileTiles } from "./components/ProfileTiles.jsx";
 import {
   DialogCloseButton, SheetGrabber, closeTopDialog, dialogLeftByBack, dialogMarks, isPhoneWidth, openDialogs,
@@ -1551,7 +1550,7 @@ function ImportLibraryView({ onNavigate, onStartInventory, onScanLibrary, onUpda
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
   }
-  return <><PageHeader title="Import library" narrow leading={<button type="button" className="glass-button glass-button--icon" onClick={() => onNavigate("settings", "library")} aria-label="Back to Library folders"><ArrowLeft size={20} /></button>} />
+  return <><PageHeader title="Import library" narrow leading={<button type="button" className="glass-button glass-button--icon" onClick={() => onNavigate("settings", "library")} aria-label="Back to Library settings"><ArrowLeft size={20} /></button>} />
     <ScanProgress scanState={scanState} scanProgress={scanProgress} />
     {catalogPending(catalog, backendStatus) ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." /> : null}
     {roots.length ? <section className="library-sources-panel"><header><div><span className="eyebrow">Library folders</span><h2>Your comic sources</h2><p>Each folder is scanned independently. Removing one from Flipparr never deletes or moves its files.</p></div><div className="library-scan-action"><span>Last library scan</span><strong>{lastScan}</strong><button className={`primary-button ${busy ? "loading" : ""}`} onClick={onScanLibrary} disabled={busy}>{busy ? <LoadingSpinner size={19} /> : <ArrowsClockwise size={19} />}{busy ? "Scanning…" : "Scan all folders"}</button></div></header><div className="library-source-list">{roots.map((root) => <article className="library-source" key={root.id}><span className="library-source-icon"><FolderOpen size={22} weight="duotone" /></span><div className="library-source-copy"><strong>{root.path}</strong><span>{root.recursive ? "Includes subfolders" : "Top-level comics only"} · {rootScanLabel(root.last_scan_at)}</span></div><div className="library-source-actions"><button className="ghost-button" disabled={busy} onClick={() => onStartInventory(root.path, Boolean(root.recursive))}><ArrowsClockwise size={16} /> Scan</button><button className="ghost-button" disabled={busy} onClick={() => { setEditingRoot(editingRoot === root.id ? null : root.id); setRootRecursive(Boolean(root.recursive)); }}><PencilSimple size={16} /> Manage</button></div>{editingRoot === root.id ? <div className="library-source-editor"><label className="check-row"><input type="checkbox" checked={rootRecursive} onChange={(event) => setRootRecursive(event.target.checked)} /><span><strong>Include subfolders</strong><small>Apply this setting on future scans</small></span></label><div><button className="secondary-button" onClick={async () => { await onUpdateRoot(root, rootRecursive); setEditingRoot(null); }}>Save setting</button><button className="danger-button" onClick={() => removeRoot(root)}>Remove from Flipparr</button></div><small>To change the folder path, add the new folder below, then remove this source.</small></div> : null}</article>)}</div></section> : null}
@@ -2528,44 +2527,78 @@ function MetadataComparison({ comparison }) {
 
 // Each section's name, the line under its title, and -- for a phone's list of
 // them, grouped as iOS Settings groups its rows -- its icon and group.
+// Since 2026-10-16 (the settings pass): "Matching and fixes" is part of
+// Metadata, both being how Flipparr knows what a comic is, and the damaged
+// comics check sits in Library health beside what it finds.
 const SETTINGS_SECTIONS = [
   { id: "profile", label: "Your profile", icon: UserCircle, group: "you",
-    detail: "Your name and picture, what switching to you asks for, and this device." },
+    detail: "Your name, picture and what switching to you asks for." },
   { id: "health", label: "Library health", icon: Heartbeat, group: "library",
-    detail: "Damaged files and matches waiting for you to confirm or fix." },
-  { id: "library", label: "Library folders", icon: FolderOpen, group: "library",
-    detail: "The folders Flipparr reads your comics from, and how often it checks them." },
-  { id: "matching", label: "Matching and fixes", icon: Sparkle, group: "library",
-    detail: "How Flipparr decides what a file is, and which formats it manages." },
+    detail: "Damaged comics, duplicate copies and matches to confirm." },
+  { id: "library", label: "Library", icon: FolderOpen, group: "library",
+    detail: "The folders Flipparr reads, how often, and the file format kept." },
   { id: "acquisition", label: "Acquisition services", icon: CloudArrowDown, group: "sources",
     detail: "Where releases are found and downloaded, and in which language." },
-  { id: "metadata", label: "Metadata sources", icon: Database, group: "sources",
-    detail: "Where issue titles, dates, covers and matches come from." },
+  { id: "metadata", label: "Metadata", icon: Database, group: "sources",
+    detail: "Where comic details come from, and how matches are made." },
   { id: "reader", label: "Reader", icon: BookOpen, group: "reading",
-    detail: "Panel view, and the models that can help it with the pages it cannot read." },
+    detail: "Panel view, and the vision assistant that helps it read." },
   { id: "profiles", label: "Profiles", icon: Users, group: "app",
-    detail: "Who reads this library. Each profile keeps its own place, history and ratings." },
+    detail: "Who reads this library, and what each may see." },
   { id: "security", label: "Security", icon: LockSimple, group: "app",
-    detail: "Who can reach this app, and how they sign in." },
+    detail: "Who can reach Flipparr, and how they sign in." },
   { id: "system", label: "System", icon: Pulse, group: "app",
-    detail: "Whether the background work is running, what it has waiting, and what went wrong lately." },
+    detail: "Background work, what it has waiting, and recent problems." },
   { id: "about", label: "About", icon: Info, group: "app",
-    detail: "Flipparr's licence, where its information comes from, and what leaves this server." },
+    detail: "Licence, where information comes from, and privacy." },
 ];
+// A section that was folded into another: its old address opens the new one.
+const RETIRED_SETTINGS_SECTIONS = { matching: "metadata" };
+
+const SCAN_EVERY = { 15: "every 15 minutes", 60: "hourly", 360: "every 6 hours", 1440: "daily" };
+/**
+ * One line of what is set in each section, under its row in the phone's
+ * index. Only what Settings already holds -- the index asks the server for
+ * nothing of its own -- so a section with nothing known yet has no line.
+ */
+function settingsIndexStatus({ admin, viewer, catalog, needAttention, autoScan, autoScanInterval, providers = [], services = [], everyPage, authStatus, users }) {
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const names = (list) => list.map((item) => item.name).join(", ");
+  const status = { profile: viewer?.name || null };
+  if (!admin) return status;
+  if (catalog) {
+    status.health = needAttention ? `${needAttention} need${needAttention === 1 ? "s" : ""} attention` : "All clear";
+    const roots = catalog.roots || [];
+    status.library = roots.length
+      ? `${plural(roots.length, "folder")} · ${autoScan ? `scans ${SCAN_EVERY[autoScanInterval] || "automatically"}` : "scans by hand"}`
+      : "No folders yet";
+  }
+  if (services.length) {
+    const ready = services.filter((service) => service.enabled);
+    status.acquisition = ready.length ? `${names(ready)} ready` : "Nothing connected yet";
+  }
+  if (providers.length) {
+    const accounts = providers.filter((provider) => provider.kind !== "reading" && !provider.builtIn && provider.enabled);
+    status.metadata = accounts.length ? `${names(accounts)} and the built-in sources` : "Built-in sources only";
+    const vision = providers.filter((provider) => provider.kind === "reading" && provider.enabled);
+    status.reader = vision.length ? `${names(vision)} · ${everyPage ? "every page" : "hard pages only"}` : "No vision assistant";
+  }
+  if (authStatus) status.security = authStatus.method === "forms" ? "Sign-in required" : "Sign-in off";
+  if (users) status.profiles = plural(users.length, "profile");
+  return status;
+}
 
 // The sections a profile is shown: everything for the admin; a reader's own
 // profile and reader settings.
 // A reader's sections say only what is theirs: the vision models behind
 // panel view are the admin's.
-const READER_SECTION_DETAIL = { reader: "How panel view reads a page, one panel at a time." };
+const READER_SECTION_DETAIL = { reader: "How panel view reads a page." };
 
 function settingsSectionsFor(viewer) {
   return SETTINGS_SECTIONS.filter((item) => can(viewer, `settings.${item.id}`))
     .map((item) => (!isAdmin(viewer) && READER_SECTION_DETAIL[item.id] ? { ...item, detail: READER_SECTION_DETAIL[item.id] } : item));
 }
 
-// One block of a settings section, as a titled card; `action` sits at the
-// title's end.
 // The pages a person fixed by hand, as a file: out of this Flipparr and into
 // another, or back into this one after a loss. Each fix is keyed to the
 // page's own fingerprint, so it finds its page again under another file.
@@ -2591,14 +2624,13 @@ function PanelFixesCard() {
     }
   }
   const pages = summary?.pages ?? 0;
-  return <div className="panel-fixes">
-    <p className="settings-card-lead">
-      {summary === null ? "Your panel fixes." : pages
-        ? `You have fixed ${pages} page${pages === 1 ? "" : "s"} in ${summary.comics} comic${summary.comics === 1 ? "" : "s"} by hand.`
-        : "No pages fixed by hand yet."}
-      {summary?.waitingForPages ? ` ${summary.waitingForPages} imported fix${summary.waitingForPages === 1 ? "" : "es"} are waiting for their pages to be read.` : ""}
-      {" "}Each fix is kept against the page itself, so it follows the page to a replaced file or another Flipparr. Export them as a file to keep; import a file to bring them back.
-    </p>
+  const plural = (count, word) => `${count.toLocaleString()} ${word}${count === 1 ? "" : "s"}`;
+  return <SettingsCard title="Panel fixes" description="Pages you fixed by hand, kept against the page itself."
+    more={<p>A fix follows its page to a replaced file or another Flipparr. Export them as a file to keep; import a file to bring them back.</p>}>
+    <SettingsFacts facts={[
+      ["Fixed by hand", summary === null ? "…" : pages ? `${plural(pages, "page")} in ${plural(summary.comics, "comic")}` : "None yet"],
+      ["Waiting for their pages", summary?.waitingForPages ? plural(summary.waitingForPages, "imported fix") : null],
+    ]} />
     <div className="settings-card-actions">
       <a className="ghost-button" href="/api/v1/panels/export" download>Export panel fixes</a>
       <label className={`ghost-button file-button${busy ? " busy" : ""}`}>
@@ -2608,7 +2640,7 @@ function PanelFixesCard() {
       {result ? <small role="status">{result.attached} attached, {result.waiting} waiting for pages, {result.alreadyFixed} already fixed here{result.unusable ? `, ${result.unusable} unusable` : ""}.</small> : null}
       {error ? <small role="alert">{error}</small> : null}
     </div>
-  </div>;
+  </SettingsCard>;
 }
 
 // The documented Docker mount, so most installs need no typing at all.
@@ -3138,8 +3170,9 @@ function ProfilesSettings({ catalog, onCatalogChanged }) {
   const owner = users?.find((user) => user.id === 1);
   const guarded = isLocked(owner);
   return <>
-    <SettingsCard title="Profiles" action={<button type="button" className="secondary-button" onClick={() => header?.profile?.onAdd()} disabled={!guarded}><Plus size={18} /> Add profile</button>}>
-      <p className="settings-card-lead">Readers can read and rate; the library, downloads and settings stay yours.</p>
+    <SettingsCard title="Profiles" action={<button type="button" className="secondary-button" onClick={() => header?.profile?.onAdd()} disabled={!guarded}><Plus size={18} /> Add profile</button>}
+      description="Readers can read and rate; the library, downloads and settings stay yours."
+      more={<p>A device you sign in on with your password asks &ldquo;Who&rsquo;s reading?&rdquo; from then on, like Plex Home. Forgetting shared devices is under Security.</p>}>
       {users && !guarded ? <p className="settings-card-note">First give your own profile a PIN (in Your profile) or a password (in Security), so nobody at a shared device can open yours.</p> : null}
       {users === null && !error ? <CatalogLoading title="Loading profiles…" detail="" /> : null}
       {error ? <p className="workbench-error" role="alert">{error}</p> : null}
@@ -3158,9 +3191,6 @@ function ProfilesSettings({ catalog, onCatalogChanged }) {
       </div>
     </SettingsCard>
     <RatingsCard catalog={catalog} profiles={users || []} onCatalogChanged={onCatalogChanged} />
-    <SettingsCard title="Shared devices">
-      <p className="settings-card-lead">A device you sign in on with your password asks &ldquo;Who&rsquo;s reading?&rdquo; from then on, like a Plex Home. A reader who signs in with their own password on their own phone gets only their profile.</p>
-    </SettingsCard>
     {editing ? <ProfileEditorDrawer user={editing} catalog={catalog} adminPassword={Boolean(security?.configured)} onClose={() => setEditing(null)}
       onPictureChanged={async (updated) => { setEditing(updated); await load(); }}
       onSaved={async () => { setEditing(null); await load(); }} /> : null}
@@ -3224,14 +3254,19 @@ function RatingsCard({ catalog, profiles = [], onCatalogChanged }) {
     summary.by_admin ? `${summary.by_admin} set by you` : null,
   ].filter(Boolean) : [];
   return <SettingsCard title="Ratings" action={summary ? <button type="button" className="secondary-button" onClick={lookAgain} disabled={Boolean(busy)} aria-busy={busy === "again"}>
-    {busy === "again" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} Look again</button> : null}>
+    {busy === "again" ? <LoadingSpinner size={16} /> : <ArrowsClockwise size={16} />} Look again</button> : null}
+    more={summary ? <p>Covers are read only for runs Metron has no rating for: one cover per run, on your key, for a rating such as DC&rsquo;s 13+ TEEN or Marvel&rsquo;s RATED T+. A profile&rsquo;s limit is set in its profile, and a run&rsquo;s rating in its Edit sheet.</p> : null}>
     {summary ? <>
-      <p className="settings-card-lead">{summary.rated} of {summary.runs} run{summary.runs === 1 ? " has" : "s have"} a rating{parts.length ? `: ${parts.join(", ")}` : ""}.{summary.waiting ? ` ${summary.waiting} still to look at.` : ""} A profile&rsquo;s limit is set in its profile, and a run&rsquo;s rating in its Edit sheet.</p>
+      <SettingsFacts facts={[
+        ["Rated", `${summary.rated.toLocaleString()} of ${summary.runs.toLocaleString()} run${summary.runs === 1 ? "" : "s"}`],
+        ["Where from", parts.length ? parts.join(", ") : null],
+        ["Still to look at", summary.waiting ? summary.waiting.toLocaleString() : null],
+      ]} />
       <Toggle checked={summary.fromCovers} onChange={busy || !summary.visionConnected ? () => {} : toggleCovers} disabled={!summary.visionConnected}
         title="Read ratings printed on covers"
         description={summary.visionConnected
-          ? "For runs Metron has no rating for, the newest cover is sent to your vision connector to read the rating printed there, such as DC's 13+ TEEN or Marvel's RATED T+. One cover per run, on your key."
-          : "Connect Claude or ChatGPT in Settings, Reader first."} />
+          ? "Your vision assistant reads the rating on a run's newest cover."
+          : "Connect Claude or ChatGPT in Settings › Reader first."} />
       <div className="ratings-card-review">
         <span><strong>Rate runs yourself</strong><small>{summary.runs - summary.rated ? `${summary.runs - summary.rated} have no rating. ` : ""}Rate many at once, or check what a profile can see.</small></span>
         <button type="button" className="secondary-button" onClick={() => setReviewing(true)} disabled={!catalog?.series}><ListChecks size={18} /> Set ratings</button>
@@ -3462,9 +3497,9 @@ function ProfileEditorDrawer({ user, catalog, adminPassword, onClose, onSaved, o
               : `${name || "They"} can read everything in the library.`}</p>
             {maxRating ? <>
               <Toggle checked={allowUnrated} onChange={setAllowUnrated} title="Unrated comics"
-                description="Many runs have no rating yet, and Image and Boom print none. Off, they are hidden too." />
+                description="Show runs with no rating yet; Image and Boom print none." />
               <Toggle checked={canDiscover} onChange={setCanDiscover} title="Discover"
-                description="New releases and online search carry no rating to filter by, so they show every cover." />
+                description="New releases and online search can’t be filtered, so they show every cover." />
             </> : null}
           </div>
         </SettingsCard>}
@@ -3472,7 +3507,7 @@ function ProfileEditorDrawer({ user, catalog, adminPassword, onClose, onSaved, o
           <Toggle checked={showOnPicker} onChange={setShowOnPicker} title="Show on shared devices"
             description="Listed when a shared device asks who is reading." />
           {owner || creating ? null : <Toggle checked={enabled} onChange={setEnabled} title="Profile on"
-            description="Off, this profile cannot be opened or signed in to. Its history is kept." />}
+            description="Off, it can’t be opened or signed in to; its history is kept." />}
           {creating ? null : <div className="settings-card-actions">
             <button type="button" className="secondary-button" onClick={() => act("signout")} disabled={Boolean(busy)}>Sign out everywhere</button>
           </div>}
@@ -3738,8 +3773,8 @@ function SystemSettings({ onNavigate, onSectionChange }) {
         </li>)}
       </ul> : <p className="settings-card-lead">No problems since Flipparr started.</p>}
     </SettingsCard>
-    <SettingsCard title="Support">
-      <p className="settings-card-lead">A file with everything on this page and which services are set up, for when you ask someone for help. It holds no passwords, keys, tokens or service addresses.</p>
+    <SettingsCard title="Support" description="A file of this page and what is set up, for when you ask for help."
+      more={<p>It holds no passwords, keys, tokens or service addresses.</p>}>
       <button type="button" className="secondary-button" onClick={() => downloadFrom("/api/v1/system/diagnostics")}><DownloadSimple size={18} /> Download diagnostics</button>
     </SettingsCard>
   </>;
@@ -3926,7 +3961,9 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
   </>;
   if (!open) {
     return <><PageHeader title="Settings" />
-      <SettingsIndex onOpen={onSectionChange} counts={{ health: needAttention }} sections={sections} />
+      <SettingsIndex onOpen={onSectionChange} counts={{ health: needAttention }} sections={sections}
+        status={settingsIndexStatus({ admin, viewer, catalog, needAttention, autoScan, autoScanInterval, providers, services, everyPage, authStatus,
+          users: lastAnswer("/api/v1/users")?.users })} />
       {modals}
     </>;
   }
@@ -3937,6 +3974,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
         {current === "profile" ? <YourProfileSettings authStatus={authStatus} onSignOut={onSignOut} catalog={catalog} onViewerChanged={onAuthChanged} /> : null}
         {current === "profiles" ? <ProfilesSettings catalog={catalog} onCatalogChanged={onCatalogChanged} /> : null}
         {current === "health" ? <MetadataView {...health} /> : null}
+        {current === "health" && admin ? <DamagedComics autoReplace={autoReplace} onAutoReplace={saveAutoReplace} saving={savingAutoReplace} /> : null}
         {current === "health" ? <DuplicateCopies onChanged={onCatalogChanged} /> : null}
         {current === "library" ? catalogPending(catalog, backendStatus)
           ? <CatalogLoading title="Loading your library folders…" detail="Checking which folders Flipparr already scans." />
@@ -3954,81 +3992,95 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
               </div> : null}
             </SettingsCard>
             {roots.length ? <SettingsCard title="Automatic scans">
-              <Toggle checked={autoScan} onChange={savingAutoScan ? () => {} : (next) => saveAutoScan({ autoScanEnabled: next })} title="Scan automatically" description="Checks your library folders in the background, so comics added outside Flipparr appear without a manual scan." />
-              {autoScan ? <div className="form-field settings-language settings-scan-interval"><span>How often</span><GlassSelect label="How often" value={autoScanInterval} disabled={savingAutoScan}
+              <Toggle checked={autoScan} onChange={savingAutoScan ? () => {} : (next) => saveAutoScan({ autoScanEnabled: next })} title="Scan automatically" description="Comics added outside Flipparr appear without a manual scan." />
+              {autoScan ? <SettingsField label="How often"><GlassSelect label="How often" value={autoScanInterval} disabled={savingAutoScan}
                 onChange={(next) => saveAutoScan({ autoScanIntervalMinutes: Number(next) })}
-                options={[{ value: 15, label: "Every 15 minutes" }, { value: 60, label: "Every hour" }, { value: 360, label: "Every 6 hours" }, { value: 1440, label: "Once a day" }]} /></div> : null}
+                options={[{ value: 15, label: "Every 15 minutes" }, { value: 60, label: "Every hour" }, { value: 360, label: "Every 6 hours" }, { value: 1440, label: "Once a day" }]} /></SettingsField> : null}
             </SettingsCard> : null}
-            <SettingsCard title="New downloads">
+            <SettingsCard title="New downloads"
+              more={<p>CBZ pages open faster and download to Flipparr View with less work for the server. Comics already in your library are converted only if you choose to, below.</p>}>
               <Toggle checked={convertToCbz} onChange={savingConvertToCbz ? () => {} : saveConvertToCbz} title="Store new comics as CBZ"
-                description="Comics Flipparr downloads as CBR are saved as CBZ, every page kept as it was. CBZ pages open faster and download to Flipparr View with less work for the server. Comics already in your library are converted only if you choose to, below." />
+                description="CBR downloads are saved as CBZ, every page kept as it was." />
             </SettingsCard>
             <LibraryCbzConversion />
-            <DamagedComics autoReplace={autoReplace} onAutoReplace={saveAutoReplace} saving={savingAutoReplace} />
           </> : null}
-        {current === "matching" ? <>
-          <SettingsCard title="How matches are accepted">
-            <p className="settings-card-lead">Matches are accepted automatically when the evidence is strong. Flipparr scores every match from corroborating and conflicting evidence (filename, embedded metadata, provider agreement). Confident matches are applied without review; anything below that threshold, or with conflicting evidence, waits under Library health for you to confirm or fix.</p>
-          </SettingsCard>
-          <SettingsCard title="Formats">
-            <Toggle checked={collectedEditions} onChange={savingCollectedEditions ? () => {} : toggleCollectedEditions} title="Collected editions (trades, hardcovers, omnibuses)" description="Off by default. Turn on to browse and manage collected editions alongside Issues. Their metadata and file availability are less complete than Issues, and they are never used to fulfill Issue ownership or acquisition." />
-          </SettingsCard>
-        </> : null}
         {current === "security" ? <>
           <SecuritySettings onChanged={onAuthChanged} onSignOut={onSignOut} />
-          <SettingsCard title="Request log">
+          <SettingsCard title="Request log"
+            more={<p>Addresses help trace who reached the app. Off, the log keeps the page, the result and the profile, and no addresses. Sign-in limits work either way.</p>}>
             <Toggle checked={logAddresses} onChange={savingLogAddresses ? () => {} : saveLogAddresses} title="Record visitor addresses"
-              description="On, each line of the server log names the address a request came from, which helps trace who reached the app. Off, the log keeps the page, the result and the profile, and no addresses. Sign-in limits work either way." />
+              description="Each line of the server log names where a request came from." />
           </SettingsCard>
         </> : null}
         {current === "about" ? <AboutSettings /> : null}
         {current === "system" ? <SystemSettings onNavigate={onNavigate} onSectionChange={onSectionChange} /> : null}
         {current === "acquisition" ? <>
-          <SettingsCard title="Download order" className="metadata-source-settings">
-            <p className="settings-card-lead">Flipparr takes a release from the first source here that has one good enough. Pulling a whole run, a pack still comes first; pulling one issue, a single does.</p>
+          <SettingsCard title="Download order" className="metadata-source-settings"
+            description="A release is taken from the first source here with a good one."
+            more={<p>Pulling a whole run, a pack still comes first; pulling one issue, a single does.</p>}>
             <SourceOrderList rows={sourceRows(releaseOrder, services)} onReorder={saveReleaseOrder} />
             <p className="source-order-status" aria-live="polite">{orderStatus}</p>
           </SettingsCard>
+          <SettingsCard title="Language"
+            more={<p>One that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</p>}>
+            <SettingsField label="Language wanted" hint="A release that says it is another language is never grabbed.">
+              <GlassSelect label="Language wanted" value={language} disabled={savingLanguage} onChange={changeLanguage}
+                options={languageOptions.map(([value, label]) => ({ value, label }))} /></SettingsField>
+          </SettingsCard>
           {groupServices(services).map((group) => <SettingsCard title={group.title} className="metadata-source-settings" key={group.id}>
             <p className="settings-card-lead">{group.lead}</p>
-            {group.services.map((service) => <AcquisitionService service={service} onConfigure={() => setEditingService(service)} key={service.id} />)}
+            {group.services.map((service) => <AcquisitionService service={service} concise onConfigure={() => setEditingService(service)} key={service.id} />)}
           </SettingsCard>)}
           {serviceError ? <p className="workbench-error" role="alert">{serviceError}</p> : null}
-          <SettingsCard title="Language">
-            <div className="form-field settings-language"><span>Language wanted</span><GlassSelect label="Language wanted" value={language} disabled={savingLanguage} onChange={changeLanguage}
-              options={languageOptions.map(([value, label]) => ({ value, label }))} /><small>A release that says it is another language is never grabbed, and one that says so only once downloaded is refused instead of filed under the issue it claims to be. Releases that say nothing are judged on the rest of the evidence.</small></div>
-          </SettingsCard>
         </> : null}
         {current === "reader" ? <>
-          <SettingsCard title="Panel view">
-            <p className="settings-card-lead">Reads a page one panel at a time, zoomed to fit, in reading order. Turn it on from the reader&rsquo;s settings or with the P key; the choice follows your profile to any device. The rest of the page dims around the panel being read, which the same settings can turn off.{admin ? <> Flipparr finds the panels itself, and a page it gets wrong can be fixed by hand from the same settings &mdash; drawn, moved and numbered over the page &mdash; and stays as you left it.</> : null}</p>
-            {admin ? <PanelFixesCard /> : null}
-          </SettingsCard>
-          {/* Claude and ChatGPT are filed here, not under Metadata sources:
+          <SettingsCard title="Panel view" description="Reads a page one panel at a time, zoomed to fit, in reading order."
+            more={<>
+              <p>Turn it on in the reader&rsquo;s settings, or with the P key. The choice follows your profile to every device.</p>
+              <p>The rest of the page dims around the panel being read; the same settings can turn that off.</p>
+              {admin ? <p>Flipparr finds the panels itself. A page it gets wrong can be fixed by hand from the same settings &mdash; drawn, moved and numbered over the page &mdash; and stays as you left it.</p> : null}
+            </>} />
+          {admin ? <PanelFixesCard /> : null}
+          {/* Claude and ChatGPT are filed here, not under Metadata:
               they contribute nothing to what a comic is, only to how a hard
               page is read. They spend the admin's key, so they are the admin's. */}
-          {admin ? <><SettingsCard title="Help with hard pages" className="metadata-source-settings">
-            <p className="settings-card-lead">Optional. With an API key, one of these is asked about the pages you read in panel view &mdash; each page once, sent as an image &mdash; and the page itself corrects the answer&rsquo;s edges. Nothing is sent while they are off.</p>
-            {providers.filter((provider) => provider.kind === "reading").map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+          {admin ? <><SettingsCard title="Vision assistant" className="metadata-source-settings"
+            description="Optional: Claude or ChatGPT reads panels on your API key."
+            more={<>
+              <p>Each page is asked about once, sent as an image, and the page itself corrects the answer&rsquo;s edges. Nothing is sent while both are off.</p>
+              <p><strong>Ask about every page</strong>: off, the model is asked only about pages Flipparr could not read. On, its answer replaces Flipparr&rsquo;s own, which can be wrong while sure. About half a cent a page with Sonnet.</p>
+              <p><strong>Readers&rsquo; pages too</strong>: off, other profiles read what Flipparr found itself, and every page you have already had read or fixed.</p>
+              <p>Measured on real pages, September 2026: Claude (Sonnet 5) read every layout tried, the hardest to within a few percent. ChatGPT (gpt-4.1-mini) is cheaper and cautious &mdash; it says &ldquo;no panels&rdquo; when unsure and merges panels rather than inventing them. Either way, Flipparr fits a model&rsquo;s boxes to the gutters it finds and refuses boxes that cross the art.</p>
+            </>}>
+            {providers.filter((provider) => provider.kind === "reading").map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
             {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
+            <Toggle checked={everyPage} onChange={savingEveryPage ? () => {} : toggleEveryPage} title="Ask about every page"
+              description="Its reading replaces Flipparr's own on every page you open." />
             <Toggle checked={forReaders} onChange={savingEveryPage ? () => {} : toggleForReaders} title="Readers' pages too"
-              description="On, pages other profiles open are asked about as well, on your key. Off, they read what Flipparr found itself and every page you have already had read or fixed." />
-            <Toggle checked={everyPage} onChange={savingEveryPage ? () => {} : toggleEveryPage} title="Ask about every page" description="On, the model reads every page you open in panel view and its answer replaces what Flipparr found itself, which can be wrong while sure. Off, it is asked only about the pages Flipparr could not read. About half a cent a page with Sonnet." />
-            <p className="settings-card-note">Measured on real pages, September 2026: Claude (Sonnet 5) read every layout tried, the hardest to within a few percent. ChatGPT (gpt-4.1-mini) is cheaper and cautious &mdash; it says &ldquo;no panels&rdquo; when unsure and merges panels rather than inventing them. Either way, Flipparr fits a model&rsquo;s boxes to the gutters it finds itself and refuses boxes that cross the art.</p>
+              description="Other profiles' pages are read on your key as well." />
           </SettingsCard>
           <OvernightPanels />
                     <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside></> : null}
         </> : null}
         {current === "metadata" ? <>
-          <SettingsCard title="Community reading lists">
-            <Toggle checked={communityLists} onChange={savingCommunityLists ? () => {} : saveCommunityLists} title="Suggest community reading lists"
-              description="Story-arc suggestions include reading lists people have shared on GitHub. On, Flipparr fetches the list of them from GitHub once a day; a list itself is downloaded only when you pick it." />
-          </SettingsCard>
-          <SettingsCard title="Sources with an account" className="metadata-source-settings">
-            <p className="settings-card-lead">Built-in sources work immediately. Add API credentials for more issue titles, dates, covers, and matches.</p>
-            {providers.filter((provider) => !provider.builtIn && provider.kind !== "reading").map((provider) => <Provider provider={provider} onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
+          <SettingsCard title="Sources with an account" className="metadata-source-settings"
+            description="Built-in sources work at once; an account adds titles, dates, covers and matches.">
+            {providers.filter((provider) => !provider.builtIn && provider.kind !== "reading").map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
             <BuiltInSources providers={providers} />
             {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
+          </SettingsCard>
+          <SettingsCard title="How matches are accepted"
+            description="Strong matches are applied for you; the rest wait in Library health."
+            more={<p>Every match is scored from the evidence that agrees and disagrees: the filename, the comic&rsquo;s own metadata, and whether the sources agree. A match below the bar, or with conflicting evidence, waits for you to confirm or fix.</p>} />
+          <SettingsCard title="Formats"
+            more={<p>Off by default. Their metadata and files are less complete than issues&rsquo;, and they never count toward owning, or downloading, an issue.</p>}>
+            <Toggle checked={collectedEditions} onChange={savingCollectedEditions ? () => {} : toggleCollectedEditions} title="Collected editions"
+              description="Browse and manage trades, hardcovers and omnibuses alongside issues." />
+          </SettingsCard>
+          <SettingsCard title="Community reading lists"
+            more={<p>On, Flipparr fetches the index of them from GitHub once a day; a list itself is downloaded only when you pick it.</p>}>
+            <Toggle checked={communityLists} onChange={savingCommunityLists ? () => {} : saveCommunityLists} title="Suggest community reading lists"
+              description="Story-arc suggestions include lists people share on GitHub." />
           </SettingsCard>
           <aside className="provider-policy-note"><ShieldCheck size={19} weight="fill" /><span><strong>Your API credentials stay on this device</strong><small>Keys are hidden after saving and sent only to the service you configure.</small></span></aside>
         </> : null}
@@ -4083,8 +4135,12 @@ function SecuritySettings({ onChanged, onSignOut }) {
   const on = config.method === "forms";
   return <>
     <SettingsCard title="Sign-in"
-      action={on && onSignOut ? <button type="button" className="secondary-button" onClick={onSignOut}><SignOut size={17} /> Sign out</button> : null}>
-    <p className="settings-card-lead">This app stores your metadata and download-client API keys and can start downloads, so require a sign-in if anything other than you can reach it.</p>
+      action={on && onSignOut ? <button type="button" className="secondary-button" onClick={onSignOut}><SignOut size={17} /> Sign out</button> : null}
+      description="Require a sign-in if anyone but you can reach Flipparr."
+      more={<>
+        <p>Flipparr keeps your metadata and download-client API keys and can start downloads. With sign-in on, the sign-in page and the container&rsquo;s health check are the only things reachable without a session.</p>
+        <p><strong>Treat local addresses as a shared device</strong>: with one profile, a device on the local network opens as that profile without signing in; with readers it asks who is reading, and the admin needs their PIN or password. Anything that reaches Flipparr through a tunnel, a reverse proxy or a container bridge arrives from a private address and would be let straight in, so turn it on only if the traffic is genuinely local, and set <code>FLIPPARR_TRUSTED_PROXIES</code> when a proxy is in front.</p>
+      </>}>
     {config.configured ? <label className="form-field"><span>Your current password</span>
       <PasswordInput value={currentPassword} autoComplete="current-password" placeholder="Needed to change anything here" onChange={(event) => setCurrentPassword(event.target.value)} />
     </label> : null}
@@ -4096,13 +4152,13 @@ function SecuritySettings({ onChanged, onSignOut }) {
             : setError("Set a username and password below first."))
         : save({ method: "none" })}
       title="Require sign-in"
-      description="Off by default. When on, the API and library views need a session; the sign-in page itself and the container health check stay reachable."
+      description="Every page and the API need a session."
     />
     <Toggle
       checked={Boolean(config.localBypass)}
       onChange={(next) => save({ localBypass: next })}
       title="Treat local addresses as a shared device"
-      description="Off by default. On, a device on the local network is a shared one: with one profile it opens as that profile without signing in; with readers it asks who is reading, and the admin needs their PIN or password. Anything reaching this app through a tunnel, reverse proxy or container bridge arrives from a private address and would be let straight in — so turn this on only if you know the traffic is genuinely local, and set FLIPPARR_TRUSTED_PROXIES when a proxy is in front."
+      description="Devices on your network skip signing in; read More about this first."
     />
     </SettingsCard>
     <SettingsCard title="Credentials">
@@ -4148,8 +4204,11 @@ function SharedDevicesCard() {
       setState("idle");
     }
   }
-  return <SettingsCard title="Shared devices">
-    <p className="settings-card-lead">A device you sign in on with your password becomes a shared one: it asks who is reading. If one is lost or given away, forget them all. Each will need your password again, and every profile open on one is signed out. This device stays as it is, and so do readers signed in on their own phones.</p>
+  return <SettingsCard title="Shared devices" description="A device you sign in on with your password asks “Who’s reading?”, like Plex Home."
+    more={<>
+      <p>A reader who signs in with their own password on their own phone gets only their profile.</p>
+      <p>If a shared device is lost or given away, forget them all: each needs your password again, and every profile open on one is signed out. This device stays as it is, and so do readers signed in on their own phones.</p>
+    </>}>
     <div className="settings-card-actions">
       {state === "confirm"
         ? <>
@@ -4812,7 +4871,7 @@ function stateFromLocation(pathname, search) {
   const routed = VIEW_BY_ROUTE[first] || RETIRED_ROUTES[first] || "library";
   // An old link that searched Discover is a search.
   const active = routed === "discover" && params.get("q") ? "search" : routed;
-  const requestedSection = segments[1];
+  const requestedSection = RETIRED_SETTINGS_SECTIONS[segments[1]] || segments[1];
   return {
     active,
     // No section is the list of them on a phone; above 640px it opens the first.

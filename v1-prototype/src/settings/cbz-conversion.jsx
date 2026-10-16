@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowsClockwise, Stop } from "@phosphor-icons/react";
 import { apiRequest } from "../api.js";
-import { SettingsCard, Toggle } from "../components/SettingsControls.jsx";
+import { SettingsCard, SettingsFacts, Toggle } from "../components/SettingsControls.jsx";
 import { LoadingSpinner } from "../components/glass.jsx";
 
 export function LibraryCbzConversion() {
@@ -47,20 +47,21 @@ export function LibraryCbzConversion() {
   if (!status && error) return <SettingsCard title="Existing CBR comics"><p className="workbench-error" role="alert">{error}</p></SettingsCard>;
   if (!status || (!status.candidates && !status.running && !status.finishedAt)) return null;
   const finished = status.done + status.kept + status.failed;
-  return <SettingsCard title="Existing CBR comics">
+  return <SettingsCard title="Existing CBR comics"
+    more={<p>Converting stores a comic as CBZ, every page as it was; what you have read, rated, fixed or chosen stays with it. Kept originals go to .flipparr/converted in their library folder, where you can delete them once you are happy.</p>}>
     {/* Said once at the start and once at the end; the moving count below is for the eye. */}
     <p className="sr-only" role="status">{status.running ? `Converting ${status.total} comics to CBZ in the background.` : status.finishedAt ? "The conversion has finished." : ""}</p>
     <p className="settings-card-lead">{status.running
       ? `Converting ${finished + 1} of ${status.total}${status.current ? `: ${status.current}` : ""}`
       : status.candidates
-        ? `${status.candidates} ${status.candidates === 1 ? "comic is" : "comics are"} stored as CBR (or 7z). Converting stores them as CBZ, every page as it was; what you have read, rated, fixed or chosen stays with each comic.`
+        ? `${status.candidates} ${status.candidates === 1 ? "comic is" : "comics are"} stored as CBR or 7z, which opens slower than CBZ.`
         : "Every comic is stored as CBZ."}</p>
-    {status.finishedAt && !status.running ? <p className="settings-card-note">
-      Last run: {status.done} converted, {status.kept} left as they are{status.failed ? `, ${status.failed} failed` : ""}.
-      {status.lastError ? ` ${status.lastError}.` : status.lastKept ? ` ${status.lastKept}.` : ""}
-    </p> : null}
+    {status.finishedAt && !status.running ? <SettingsFacts facts={[
+      ["Last run", `${status.done} converted, ${status.kept} left as they are${status.failed ? `, ${status.failed} failed` : ""}`],
+      ["Why", status.lastError || status.lastKept || null],
+    ]} /> : null}
     {!status.running && status.candidates ? <Toggle checked={keepOriginals} onChange={(next) => { setKeepOriginals(next); setConfirming(false); }} title="Keep the originals"
-      description="Each original CBR is moved to .flipparr/converted in its library folder, where you can delete it once you are happy. Off, it is deleted once its CBZ is checked." /> : null}
+      description="Off, each original is deleted once its CBZ is checked." /> : null}
     {error ? <p className="workbench-error" role="alert">{error}</p> : null}
     <div className="settings-card-actions">
       {status.running

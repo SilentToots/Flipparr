@@ -5,11 +5,13 @@
 // offline only changes which token the app carries. The server checks that
 // token when it is back: a profile whose session has ended since asks again
 // there. Plain rules; tests/reader-app-offline-profiles.test.mjs.
+import { DEVICE } from "./device.js";
 
 /**
  * The profiles to keep, from the server's list: a PIN's hash is kept only
  * while the profile is still locked with a PIN of the same length.
  */
+
 export function mergeProfiles(kept = [], fresh = []) {
   const before = new Map(kept.map((profile) => [String(profile.id), profile]));
   return fresh.map((profile) => {
@@ -31,11 +33,11 @@ export function withPinHash(profiles = [], profileId, pinHash) {
  */
 export function offlineChoice(profile, { signedIn }) {
   const name = profile?.name || "That profile";
-  if (!signedIn) return { refused: `${name} hasn’t been used on this iPad yet. Connect to Flipparr to switch to it.` };
+  if (!signedIn) return { refused: `${name} hasn’t been used on this ${DEVICE} yet. Connect to Flipparr to switch to it.` };
   if (profile.lock === "password") return { refused: `${name}’s password needs Flipparr. Connect to switch to it.` };
   if (profile.lock === "pin") {
     return profile.pinHash ? { ask: "pin" }
-      : { refused: `${name}’s PIN hasn’t been used on this iPad yet. Connect to Flipparr to switch to it.` };
+      : { refused: `${name}’s PIN hasn’t been used on this ${DEVICE} yet. Connect to Flipparr to switch to it.` };
   }
   return { open: true };
 }

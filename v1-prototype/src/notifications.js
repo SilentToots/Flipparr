@@ -80,7 +80,7 @@ function enrichmentNotifications(enrichment) {
       kind: "source",
       severity: "error",
       title: `${METADATA_PROVIDER_LABELS[cooldown.provider] || cooldown.provider || "A metadata source"} rejected its saved login`,
-      detail: "Reconnect it in Metadata sources",
+      detail: "Reconnect it in Settings › Metadata",
       view: "settings",
       focus: { section: "metadata" },
     }));

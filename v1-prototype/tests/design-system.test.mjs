@@ -279,3 +279,45 @@ test("every transition's duration is a motion token, and no curve is written by 
     .map((d) => where("styles.css", d));
   assert.deepEqual(bad, []);
 });
+
+// Settings copy (DESIGN_SYSTEM.md, "Settings cards and copy"; the owner,
+// 2026-10-16): a card's description is one sentence of at most 20 words, a
+// switch's or field's hint one of at most 15; the rest goes in the card's
+// "More about this". Only text written as a plain literal is checked -- a
+// sentence built from data is read in review -- and only in the files that
+// draw Settings.
+const SETTINGS_FILES = ["App.jsx", "reader-app/ReaderApp.jsx",
+  ...readdirSync(path.join(SRC, "settings")).filter((name) => name.endsWith(".jsx")).map((name) => `settings/${name}`)];
+const COPY_LIMITS = { SettingsCard: 20, Toggle: 15, SettingsField: 15 };
+const words = (text) => text.replace(/&[a-z]+;/g, " ").split(/\s+/).filter(Boolean).length;
+const sentences = (text) => text.split(/[.!?](?:\s+|$)(?=[A-Z“"]|$)/).filter((part) => part.trim()).length;
+
+test("a settings description or hint is one short sentence", () => {
+  const bad = [];
+  for (const file of SETTINGS_FILES) {
+    const source = read(file);
+    for (const match of source.matchAll(/\b(description|hint)="([^"]+)"/g)) {
+      const before = source.slice(0, match.index);
+      const tag = [...before.matchAll(/<([A-Z]\w*)\b/g)].pop()?.[1];
+      const limit = COPY_LIMITS[tag];
+      if (!limit) continue;
+      const text = match[2];
+      if (words(text) > limit || sentences(text) > 1) {
+        bad.push(`${file}:${before.split("\n").length} <${tag} ${match[1]}> ${words(text)} words: ${text}`);
+      }
+    }
+    // A lead written straight into the card, the old way.
+    for (const match of source.matchAll(/<p className="settings-card-lead">([^<{]+)<\/p>/g)) {
+      if (words(match[1]) > COPY_LIMITS.SettingsCard || sentences(match[1]) > 1) {
+        bad.push(`${file}:${source.slice(0, match.index).split("\n").length} lead ${words(match[1])} words: ${match[1]}`);
+      }
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("the settings copy check counts what it should", () => {
+  assert.equal(words("Reads a page one panel at a time, zoomed to fit."), 11);
+  assert.equal(sentences("One thing. Another thing."), 2);
+  assert.equal(sentences("Uses Sonnet 5.5 at about $0.005 a page."), 1);
+});

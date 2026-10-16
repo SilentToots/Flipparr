@@ -364,7 +364,7 @@ believe it only when told whom to believe.
 
 ## 3. Providers and acquisition
 
-**Settings → Metadata sources.** The Grand Comics Database works with no
+**Settings → Metadata.** The Grand Comics Database works with no
 account. Metron and Comic Vine are optional and need an API key; adding one
 improves issue titles, dates and covers.
 
@@ -758,7 +758,7 @@ tested, is in [FULFILLMENT_PROOFS.md](FULFILLMENT_PROOFS.md).
 
 Three things beyond your own services are off until you turn them on: a vision
 model reading every page (*Settings → Reader → Ask about every page*), the
-community reading lists' daily GitHub fetch (*Settings → Metadata sources*),
+community reading lists' daily GitHub fetch (*Settings → Metadata*),
 and visitor addresses in the log (*Settings → Security → Record visitor
 addresses*). The full account of what leaves the server is
 [`docs/PRIVACY.md`](PRIVACY.md).

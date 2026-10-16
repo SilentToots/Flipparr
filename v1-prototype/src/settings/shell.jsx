@@ -10,8 +10,11 @@ import { useBuild } from "./about.jsx";
 // A phone's first level of Settings, after iPhone Settings: grouped rows of
 // an icon and a name, each opening its section as a page. A count rides
 // beside the name rather than in a column of its own, which would set every
-// row's columns differently and stagger the chevrons.
-export function SettingsIndex({ counts = {}, onOpen, sections }) {
+// row's columns differently and stagger the chevrons. Under the name, one
+// line of what is set there (`status`, by section id; the owner,
+// 2026-10-16, after Android's settings guidelines: a row's subtext is its
+// state, not its title again), when the host already knows it.
+export function SettingsIndex({ counts = {}, status = {}, onOpen, sections }) {
   const build = useBuild();
   const groups = [...new Set(sections.map((item) => item.group))];
   return <nav className="settings-index" aria-label="Settings sections">
@@ -20,9 +23,12 @@ export function SettingsIndex({ counts = {}, onOpen, sections }) {
         <button type="button" onClick={() => onOpen(id)}
           aria-label={counts[id] ? `${label}. ${counts[id]} need${counts[id] === 1 ? "s" : ""} a decision` : undefined}>
           <span className={`settings-index-icon settings-index-icon--${id}`} aria-hidden="true"><Icon size={18} weight="fill" /></span>
-          <span className="settings-index-label">
-            <span>{label}</span>
-            {counts[id] ? <b className="settings-index-badge">{counts[id]}</b> : null}
+          <span className="settings-index-text">
+            <span className="settings-index-label">
+              <span>{label}</span>
+              {counts[id] ? <b className="settings-index-badge">{counts[id]}</b> : null}
+            </span>
+            {status[id] ? <small className="settings-index-status">{status[id]}</small> : null}
           </span>
           <CaretRight size={16} aria-hidden="true" />
         </button>

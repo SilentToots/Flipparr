@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowClockwise, BookOpenText, CloudArrowDown, HardDrive, Info, ShieldCheck, Trash, UserCircle, WifiSlash, X } from "@phosphor-icons/react";
 import { FlipparrMark } from "../brand.jsx";
 import { LoadingIndicator } from "../components/LoadingIndicator";
-import { SettingsCard, Toggle } from "../components/SettingsControls.jsx";
+import { SettingsCard, SettingsFacts, SettingsField, Toggle } from "../components/SettingsControls.jsx";
 import { PasswordInput } from "../components/PasswordInput.jsx";
 import { GlassSelect } from "../components/glass.jsx";
 import { useToast } from "../components/Toast.jsx";
@@ -15,6 +15,7 @@ import { ComicsIcon, DownloadsNavIcon, ReadingListIcon, SettingsNavIcon } from "
 import { AboutSettings, PRIVACY_SECTIONS } from "../settings/about.jsx";
 import { SettingsFrame, SettingsIndex } from "../settings/shell.jsx";
 import { usePhoneWidth } from "../dialogs.jsx";
+import { DEVICE } from "./device.js";
 import { CoverArt } from "../components/CoverArt.jsx";
 import { StackEdges } from "../components/StackEdges.jsx";
 import { CoverStatus } from "../components/CoverStatus.jsx";
@@ -703,7 +704,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
         if (row.state === "stale" && online) items.push({ key: "again", label: "Download again", icon: <ArrowClockwise size={16} />, onSelect: () => downloads.redownload(row.fileId).catch(() => {}) });
         if (row.state === "failed") items.push({ key: "retry", label: "Try again", icon: <ArrowClockwise size={16} />, onSelect: () => downloads.retry(row.fileId) });
         items.push({ key: "remove", label: row.state === "downloading" ? "Cancel download" : "Remove download", icon: <Trash size={16} />,
-          onSelect: () => downloads.remove(row.fileId).then(() => showToast(`${target.title} removed from this iPad`)) });
+          onSelect: () => downloads.remove(row.fileId).then(() => showToast(`${target.title} removed from this ${DEVICE}`)) });
         return items;
       }
       const listKind = target.kind === "run" ? "run" : target.kind === "arc" ? "arc" : "collection";
@@ -1069,7 +1070,7 @@ function PickerScreen({ client, current, online = true, ask = null, onClose, onS
           <button className="primary-button" disabled={busy || !secret} aria-busy={busy}>{busy ? <LoadingIndicator size="sm" /> : null} Continue</button>
         </div>
       </form> : <>
-        {offline ? <p className="settings-card-lead" role="status">Offline: profiles used on this iPad before can be opened.</p> : null}
+        {offline ? <p className="settings-card-lead" role="status">Offline: profiles used on this {DEVICE} before can be opened.</p> : null}
         {profiles === null && !error ? <LoadingIndicator size="md" /> : null}
         <ProfileTiles profiles={profiles || []} current={current} onChoose={choose} busy={busy} />
         {error ? <p className="login-error" role="alert">{error}</p> : null}
@@ -1177,7 +1178,7 @@ function DownloadSheet({ group, downloads, onClose, onStarted }) {
         : files === null ? <LoadingIndicator size="md" />
         : !unread.length ? <p className="settings-card-note">Every unread issue is on this device already.</p>
         : <>
-          <p className="settings-card-note">The next unread issues, in reading order. They finish even with the iPad locked.</p>
+          <p className="settings-card-note">The next unread issues, in reading order. They finish even with the {DEVICE} locked.</p>
           <GlassSelect label="How many" value={count} onChange={(next) => setCount(Number(next))}
             options={counts.map((n) => ({ value: n, label: n === unread.length && n > 1 ? `All ${n} unread` : `Next ${n} unread` }))} />
           <p className="settings-card-note" role="status">{!plan ? "Working out the size\u2026"
@@ -1212,23 +1213,32 @@ function AppSettingsPage({ client, status, viewer, downloads, online, settings, 
   // open, or on a phone an index that opens each over it.
   const phone = usePhoneWidth();
   const [section, setSection] = useState("");
+  // What each section holds, under its row in the phone's index.
+  const rows = useDownloadRows(downloads);
+  const [cap, setCap] = useState(null);
+  useEffect(() => { deviceStore.capBytes().then(setCap, () => {}); }, [section]);
   const current = section || (phone ? "" : "reading");
   const open = APP_SETTINGS_SECTIONS.find((item) => item.id === current);
   if (!open) {
-    return <><PageHeader title="Settings" />{notice}<SettingsIndex onOpen={setSection} sections={APP_SETTINGS_SECTIONS} /></>;
+    const status = {
+      reading: settings.downloadOpened ? `Downloads what you open${settings.downloadNext ? " · next issue too" : ""}` : "Downloads only what you choose",
+      storage: cap ? `${formatBytes(usageBytes(rows))} of ${formatBytes(cap)}` : null,
+      account: `Reading as ${viewer.name}`,
+      about: `Flipparr View ${typeof __VIEW_BUILD__ === "undefined" ? "dev" : __VIEW_BUILD__}`,
+    };
+    return <><PageHeader title="Settings" />{notice}<SettingsIndex onOpen={setSection} sections={APP_SETTINGS_SECTIONS} status={status} /></>;
   }
   return <SettingsFrame sections={APP_SETTINGS_SECTIONS} open={open} phone={phone} onSectionChange={setSection}>
     {notice}
     {current === "reading" ? <>
       <SettingsCard title="Downloads">
         <Toggle checked={settings.downloadOpened} onChange={(on) => onSettings({ downloadOpened: on })} title="Download comics you open"
-          description="A comic you start reading is kept on this iPad, so you can finish it offline." />
+          description={`A comic you start is kept on this ${DEVICE} to finish offline.`} />
         <Toggle checked={settings.downloadNext} onChange={(on) => onSettings({ downloadNext: on })} title="Download the next issue too"
           description="Opening a comic also keeps the issue after it." />
       </SettingsCard>
-      <SettingsCard title="Panel view">
-        <p className="settings-card-lead">Panel view, the dimming around a panel and the reading direction are in the reader&rsquo;s own settings while you read. They follow your profile to every device.</p>
-      </SettingsCard>
+      <SettingsCard title="Panel view" description="Panel view, its dimming and the reading direction are set in the reader as you read."
+        more={<p>They follow your profile to every device.</p>} />
     </> : null}
     {current === "storage" ? <StorageSettings downloads={downloads} viewer={viewer} /> : null}
     {current === "account" ? <SettingsCard title="Signed in">
@@ -1250,20 +1260,20 @@ function AppSettingsPage({ client, status, viewer, downloads, online, settings, 
 
 // Flipparr View's Settings sections, in the web's shape (SETTINGS_SECTIONS).
 const APP_SETTINGS_SECTIONS = [
-  { id: "reading", label: "Reading", icon: BookOpenText, group: "reading", detail: "What is kept on this iPad as you read." },
-  { id: "storage", label: "Storage", icon: HardDrive, group: "device", detail: "How much this iPad keeps, and what makes room." },
+  { id: "reading", label: "Reading", icon: BookOpenText, group: "reading", detail: `What is kept on this ${DEVICE} as you read.` },
+  { id: "storage", label: "Storage", icon: HardDrive, group: "device", detail: `How much this ${DEVICE} keeps, and what makes room.` },
   { id: "account", label: "Account", icon: UserCircle, group: "account", detail: "Who is reading, and from which Flipparr." },
-  { id: "about", label: "About", icon: Info, group: "about", detail: "This app, its licence, and what stays on this iPad." },
+  { id: "about", label: "About", icon: Info, group: "about", detail: `This app, its licence, and what stays on this ${DEVICE}.` },
 ];
 
 // What Flipparr View keeps: the server's own account, with the browser's
 // section swapped for this device's (docs/PRIVACY.md, "On the device").
 const APP_PRIVACY = [
   ...PRIVACY_SECTIONS.filter((section) => section.title !== "In your browser"),
-  { title: "On this iPad", points: [
+  { title: `On this ${DEVICE}`, points: [
     "Comics you download, at reading size, with their panels, your places and changes waiting to be sent. Kept out of iCloud backups.",
-    "The profiles you have used here, and a check of each PIN made on this iPad, so a profile can be opened offline. Never a password.",
-    "Sign-ins in the iOS Keychain. Signing out, or using another server, removes what this iPad kept for that server.",
+    `The profiles you have used here, and a check of each PIN made on this ${DEVICE}, so a profile can be opened offline. Never a password.`,
+    `Sign-ins in the iOS Keychain. Signing out, or using another server, removes what this ${DEVICE} kept for that server.`,
     "No analytics and no tracking. Flipparr View talks only to the Flipparr you connect it to.",
   ] },
 ];
@@ -1280,15 +1290,15 @@ function StorageSettings({ downloads, viewer }) {
     trimNative({ path: folder, maxBytes: Number.MAX_SAFE_INTEGER }).then(({ bytes }) => setCache(bytes), () => setCache(0));
   }, [folder]);
   const used = usageBytes(rows);
-  return <SettingsCard title="Downloads on this iPad">
+  return <SettingsCard title={`Downloads on this ${DEVICE}`}>
     <StorageGauge used={used} cap={cap} />
-    {cap ? <GlassSelect label="Download limit" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
-      options={CAP_CHOICES.map((choice) => ({ value: choice, label: `Keep up to ${formatBytes(choice)}` }))} /> : null}
-    <p className="settings-card-note">Read comics make room when you need it. Comics you&rsquo;re reading always stay.</p>
+    {cap ? <SettingsField label="Download limit" hint="Read comics make room when needed; comics you're reading always stay.">
+      <GlassSelect label="Download limit" value={cap} onChange={async (next) => { await deviceStore.setCapBytes(Number(next)); setCap(Number(next)); }}
+        options={CAP_CHOICES.map((choice) => ({ value: choice, label: `Keep up to ${formatBytes(choice)}` }))} /></SettingsField> : null}
+    <SettingsFacts facts={[["Pages kept for quick reopening", `${cache === null ? "\u2026" : formatBytes(cache)} of up to ${formatBytes(ONLINE_MAX_BYTES)}`]]} />
     <div className="settings-card-actions">
-      <span className="settings-card-note">Pages kept for quick reopening: {cache === null ? "\u2026" : formatBytes(cache)} (up to {formatBytes(ONLINE_MAX_BYTES)})</span>
       <button type="button" className="secondary-button" disabled={!cache} onClick={() => trimNative({ path: folder, maxBytes: 0 }).then(() => setCache(0), () => {})}>
-        <Trash size={16} /> Clear
+        <Trash size={16} /> Clear kept pages
       </button>
     </div>
   </SettingsCard>;
@@ -1420,7 +1430,7 @@ function DownloadsPage({ downloads, onRead, onOpenGroup, notice = null, onOpenSe
         <div className="settings-card-actions">
           <button type="button" className="secondary-button" onClick={onOpenSettings}>Change limit</button>
           {finished.length ? <button type="button" className="secondary-button" onClick={async () => {
-            if (!window.confirm(`Remove ${finished.length} read ${finished.length === 1 ? "comic" : "comics"} from this iPad?`)) return;
+            if (!window.confirm(`Remove ${finished.length} read ${finished.length === 1 ? "comic" : "comics"} from this ${DEVICE}?`)) return;
             await downloads.removeFinished();
           }}><Trash size={16} /> Remove read ({finished.length})</button> : null}
         </div>
@@ -1430,7 +1440,7 @@ function DownloadsPage({ downloads, onRead, onOpenGroup, notice = null, onOpenSe
       </SettingsCard> : null}
       <SettingsCard title="Downloaded">
         {here.length ? <div className="series-grid download-grid">{shelf.map((entry, index) => (entry.kind === "run" ? groupCard(entry, index) : card(entry.row, index)))}</div>
-          : <p className="settings-card-lead">Nothing here yet. Comics you open are kept here, or tap Download beside Read on a run.</p>}
+          : <p className="settings-card-lead">Nothing here yet: comics you open are kept here, or tap Download on a run.</p>}
       </SettingsCard>
     </div>
   </>;

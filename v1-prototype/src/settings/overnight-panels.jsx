@@ -5,7 +5,7 @@
 // has read yet is still read the moment it is opened.
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api.js";
-import { SettingsCard, Toggle } from "../components/SettingsControls.jsx";
+import { SettingsCard, SettingsFacts, SettingsField, Toggle } from "../components/SettingsControls.jsx";
 import { GlassSelect } from "../components/glass.jsx";
 
 const hourLabel = (hour) => {
@@ -28,16 +28,21 @@ export function budgetOptions(choices) {
   return (choices || [0]).map((amount) => ({ value: amount, label: amount ? `Stop once about $${amount} is spent` : "No budget" }));
 }
 
-/** What the overnight read has spent, said plainly, and how it was worked out. */
-export function spentNote(cost, budget) {
+/** What the overnight read has spent, as a fact: the amount, and what is left of a budget. */
+export function spentFact(cost, budget) {
+  if (!cost) return null;
+  const left = budget ? ` · ${dollars(Math.max(0, budget - cost.overnightSpent))} of $${budget} left` : "";
+  return `About ${dollars(cost.overnightSpent)}${left}`;
+}
+
+/** How a page's price was worked out, for the card's footnote. */
+export function priceNote(cost) {
   if (!cost) return "";
-  const spent = `The overnight read has spent about ${dollars(cost.overnightSpent)} on the vision model`;
-  const left = budget ? `, ${dollars(Math.max(0, budget - cost.overnightSpent))} of your $${budget} left` : "";
   const how = cost.measured
-    ? `about ${dollars(cost.perPage)} a page, from the token counts of its last ${cost.measuredCalls.toLocaleString()} vision readings`
-    : `about ${dollars(cost.perPage)} a page, an estimate until it has read enough pages to measure`;
-  const earlier = cost.overnightEstimatedBefore ? ` (${dollars(cost.overnightEstimatedBefore)} of it estimated, from nights before costs were recorded)` : "";
-  return `${spent}${left}${earlier}. Priced at ${how}.`;
+    ? `about ${dollars(cost.perPage)} a page, from the token counts of the vision model's last ${cost.measuredCalls.toLocaleString()} readings`
+    : `about ${dollars(cost.perPage)} a page, an estimate until enough pages have been read to measure`;
+  const earlier = cost.overnightEstimatedBefore ? ` ${dollars(cost.overnightEstimatedBefore)} of what it has spent is estimated, from nights before costs were recorded.` : "";
+  return `Costs are priced at ${how}.${earlier}`;
 }
 const STOPPED = {
   done: "finished", window_end: "stopped when the window closed", cap: "stopped at the night's vision limit",
@@ -47,10 +52,10 @@ const STOPPED = {
 };
 
 function lastNight(run) {
-  if (!run) return "It has not run yet.";
-  const read = `${run.pagesRead.toLocaleString()} ${run.pagesRead === 1 ? "page" : "pages"} read`;
-  const vision = run.visionPages ? `, ${run.visionPages.toLocaleString()} by vision` : "";
-  return `Last run (${run.night}): ${read}${vision} across ${run.comics} ${run.comics === 1 ? "comic" : "comics"}; ${STOPPED[run.stopped] || run.stopped || "running"}.`;
+  if (!run) return "Not yet";
+  const read = `${run.pagesRead.toLocaleString()} ${run.pagesRead === 1 ? "page" : "pages"}`;
+  const vision = run.visionPages ? ` (${run.visionPages.toLocaleString()} by vision)` : "";
+  return `${run.night}: ${read}${vision}, ${STOPPED[run.stopped] || run.stopped || "running"}`;
 }
 
 export function OvernightPanels() {
@@ -75,24 +80,32 @@ export function OvernightPanels() {
   }
   if (!status) return null;
   const noWindow = status.enabled && status.start === status.end;
-  return <SettingsCard title="Overnight panel read" aria-busy={saving}>
-    <p className="settings-card-lead">Reads the panels of the comics you are likely to open next while nobody is reading &mdash; Keep Reading and each run&rsquo;s next issue, new arrivals, and comics on your devices &mdash; so panel view opens at once. A page it has not reached is still read the moment you open it.</p>
+  return <SettingsCard title="Overnight panel read" aria-busy={saving}
+    description="Reads ahead the comics you'll likely open next, so panel view opens at once."
+    more={<>
+      <p>Between the hours set it reads Keep Reading and each run&rsquo;s next issue, new arrivals, and comics on your devices. A page it has not reached is still read the moment you open it.</p>
+      <p>Readers&rsquo; comics are read by Flipparr itself, never on your key unless &ldquo;Readers&rsquo; pages too&rdquo; is on above. The budget counts only this read; pages you open yourself are never held back by it.</p>
+      {status.cost ? <p>{priceNote(status.cost)}</p> : null}
+    </>}>
     <Toggle checked={status.enabled} disabled={saving} onChange={(next) => save({ overnightPanels: next })} title="Read panels overnight"
-      description="Uses this server's own clock; readers' comics are read by Flipparr itself, never on your key unless “Readers’ pages too” is on above." />
+      description="Runs between the hours below, on this server's clock." />
     {status.enabled ? <>
-      <div className="form-field settings-language settings-scan-interval"><span>From</span>
-        <GlassSelect label="From" disabled={saving} value={status.start} onChange={(next) => save({ overnightPanelsStart: Number(next) })} options={HOURS} /></div>
-      <div className="form-field settings-language settings-scan-interval"><span>Until</span>
-        <GlassSelect label="Until" disabled={saving} value={status.end} onChange={(next) => save({ overnightPanelsEnd: Number(next) })} options={HOURS} /></div>
-      <div className="form-field settings-language settings-scan-interval"><span>Vision pages a night</span>
+      <div className="settings-field-row">
+        <SettingsField label="From"><GlassSelect label="From" disabled={saving} value={status.start} onChange={(next) => save({ overnightPanelsStart: Number(next) })} options={HOURS} /></SettingsField>
+        <SettingsField label="Until"><GlassSelect label="Until" disabled={saving} value={status.end} onChange={(next) => save({ overnightPanelsEnd: Number(next) })} options={HOURS} /></SettingsField>
+      </div>
+      {noWindow ? <p className="workbench-error" role="alert">From and Until are the same hour, so the read never runs. Choose different hours.</p> : null}
+      <SettingsField label="Vision pages a night">
         <GlassSelect label="Vision pages a night" disabled={saving} value={status.visionPages} onChange={(next) => save({ overnightVisionPages: Number(next) })}
-          options={limitOptions(status.visionChoices, status.cost?.perPage ?? 0.005)} /></div>
-      {status.visionPages ? <div className="form-field settings-language settings-scan-interval"><span>Overnight budget</span>
+          options={limitOptions(status.visionChoices, status.cost?.perPage ?? 0.005)} /></SettingsField>
+      {status.visionPages ? <SettingsField label="Overnight budget">
         <GlassSelect label="Overnight budget" disabled={saving} value={status.visionBudget ?? 0} onChange={(next) => save({ overnightVisionBudget: Number(next) })}
-          options={budgetOptions(status.budgetChoices)} /></div> : null}
-      {status.cost ? <p className="settings-card-note">{spentNote(status.cost, status.visionBudget)}</p> : null}
-      {noWindow ? <p className="workbench-error" role="alert">From and Until are the same hour, so there is no window: the read never runs. Choose different hours.</p> : null}
-      <p className="settings-card-note">{lastNight(status.runs?.[0])} Tonight&rsquo;s list: {status.tonight.comics} {status.tonight.comics === 1 ? "comic" : "comics"}.</p>
+          options={budgetOptions(status.budgetChoices)} /></SettingsField> : null}
+      <SettingsFacts facts={[
+        ["Last run", lastNight(status.runs?.[0])],
+        ["Tonight", `${status.tonight.comics} ${status.tonight.comics === 1 ? "comic" : "comics"}`],
+        ["Spent so far", spentFact(status.cost, status.visionBudget)],
+      ]} />
     </> : null}
     {error ? <p className="workbench-error" role="alert">{error}</p> : null}
   </SettingsCard>;

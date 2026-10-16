@@ -158,6 +158,16 @@ You lose manual corrections, aliases and request history — not files.
 **Schema:** 80 (adds `overnight_panel_runs`, `duplicate_resolutions.state`,
 `revoked_sessions`, `vision_usage`). No change on disk.
 
+- *Settings, easier to scan* (web and Flipparr View): every card says what
+  it is for in one sentence, each switch in one line, and the rest waits
+  under a closed "More about this"; what is set or happened reads as short
+  facts, not sentences. One 12px rhythm inside every card (select fields
+  had stacked flush), labels on every select, hints one step larger.
+  Matching and fixes is part of Metadata, the damaged-comics check sits in
+  Library health, the vision settings are one "Vision assistant" card, and
+  Shared devices is one card under Security; `/settings/matching` opens
+  Metadata. On a phone, each row of the Settings list says what is set
+  there. Flipparr View says iPhone on an iPhone.
 - *The overnight read's cost, shown and capped*: each vision call's tokens
   and cost are kept (`vision_usage`), the nightly limits (now up to 5,000
   pages) are shown with what they cost a night at the measured price a
