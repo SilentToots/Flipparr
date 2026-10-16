@@ -5487,6 +5487,17 @@ class CatalogStore:
             "previous": previous[0] if previous else None,
         }
 
+    def page_scan_asked(self, file_id: int, member: str) -> bool:
+        """Whether a person last asked for this page to be scanned again: its
+        newest history is a forget (Scan pages for panels again, or a page let
+        go), which nothing has read over since but the local tiers."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT reason FROM page_panel_history WHERE file_id=? AND page_member=? ORDER BY id DESC LIMIT 1",
+                (int(file_id), member),
+            ).fetchone()
+        return row is not None and row["reason"] == "forgotten"
+
     def issue_of_file(self, file_id: int) -> int | None:
         with self._connect() as connection:
             row = connection.execute("SELECT issue_id FROM file_issue_links WHERE file_id=?", (int(file_id),)).fetchone()

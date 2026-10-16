@@ -7070,6 +7070,7 @@ class PagePanelTests(unittest.TestCase):
         from pathlib import Path
         store = Mock()
         store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.page_scan_asked.return_value = False  # nobody asked for a scan again
         store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = record
@@ -7098,6 +7099,7 @@ class PagePanelTests(unittest.TestCase):
         hand = [{"x": 0, "y": 0, "w": 1, "h": 0.5, "order": 0}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5, "order": 1}]
         store = Mock()
         store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.page_scan_asked.return_value = False  # nobody asked for a scan again
         store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = None
@@ -7168,6 +7170,7 @@ class ManualPanelTests(unittest.TestCase):
         from pathlib import Path
         store = Mock()
         store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.page_scan_asked.return_value = False  # nobody asked for a scan again
         store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = record
@@ -7218,6 +7221,7 @@ class ManualPanelTests(unittest.TestCase):
                 "panels": [{"x": 0, "y": 0, "w": 1, "h": 0.5, "order": 1}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5, "order": 0}]}
         store = Mock()
         store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.page_scan_asked.return_value = False  # nobody asked for a scan again
         store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = kept
@@ -7240,6 +7244,7 @@ class ManualPanelTests(unittest.TestCase):
         from pathlib import Path
         store = Mock()
         store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.page_scan_asked.return_value = False  # nobody asked for a scan again
         store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         with patch("app.catalog_store", return_value=store), \
@@ -7584,10 +7589,11 @@ class VisionConnectorTests(unittest.TestCase):
 class VisionInPanelPipelineTests(PagePanelTests):
     """Where the vision model sits in the pipeline: last, and only for the hard pages."""
 
-    def _ask_with_vision(self, record=None, png=None, answer="[]", ready=True, every=False, fixed=()):
+    def _ask_with_vision(self, record=None, png=None, answer="[]", ready=True, every=False, fixed=(), scan_asked=False):
         from pathlib import Path
         store = Mock()
         store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.page_scan_asked.return_value = scan_asked
         store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = record
@@ -7609,6 +7615,7 @@ class VisionInPanelPipelineTests(PagePanelTests):
         from pathlib import Path
         store = Mock()
         store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.page_scan_asked.return_value = False  # nobody asked for a scan again
         store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = None
@@ -7736,6 +7743,7 @@ class VisionInPanelPipelineTests(PagePanelTests):
         from pathlib import Path
         store = Mock()
         store.comic_page_panels.return_value = None  # no other copy of the comic has read this page
+        store.page_scan_asked.return_value = False  # nobody asked for a scan again
         store.copies_of_page.return_value = []
         store.library_file_path.return_value = Path("/library/x.cbz")
         store.page_panels.return_value = None
@@ -7773,6 +7781,30 @@ class VisionInPanelPipelineTests(PagePanelTests):
 
     def test_a_readable_page_with_clean_rows_is_not_sent(self):
         result, _, ask = self._ask_with_vision()
+        ask.assert_not_called()
+        self.assertEqual(result["source"], "auto")
+
+    def test_a_page_asked_to_be_scanned_again_is_sent_though_the_cut_can_read_it(self):
+        # Scan pages for panels again is for the model's eyes (the owner,
+        # 2026-10-16): with "every page" off, the same readable page was
+        # answered by the cut alone and never reached the model.
+        answer = '[{"x1": 0, "y1": 0, "x2": 300, "y2": 225}, {"x1": 0, "y1": 225, "x2": 300, "y2": 450}]'
+        result, store, ask = self._ask_with_vision(answer=answer, scan_asked=True)
+        ask.assert_called_once()
+        self.assertEqual(result["source"], "vlm")
+        store.page_scan_asked.assert_called_with(7, "b.jpg")
+
+    def test_a_local_reading_kept_since_a_scan_again_is_sent_once_the_connector_answers(self):
+        # Read by the cut while the connector was cooling down: the ask stands.
+        kept = {"fileSignature": "sig", "source": "auto", "segmented": True,
+                "panels": [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.5}, {"x": 0.0, "y": 0.5, "w": 1.0, "h": 0.5}]}
+        result, _, ask = self._ask_with_vision(record=kept, scan_asked=True,
+                                               answer='[{"x1": 0, "y1": 0, "x2": 300, "y2": 450}]')
+        ask.assert_called_once()
+        self.assertEqual(result["source"], "vlm")
+
+    def test_a_scan_again_with_the_connector_off_reads_with_the_local_tiers(self):
+        result, _, ask = self._ask_with_vision(scan_asked=True, ready=False)
         ask.assert_not_called()
         self.assertEqual(result["source"], "auto")
 
@@ -12355,6 +12387,24 @@ class ComicPagePanelTests(_ComicCopiesTestCase):
         detect.assert_called()
         self.assertEqual(reading["source"], "auto", "worked out again, not the old copy's vision reading")
         self.assertIsNone(self.store.page_panels(self.old, "02.jpg"), "the other copy's was forgotten with it")
+
+    def test_a_page_scanned_again_is_read_by_the_vision_model_with_every_page_off(self):
+        app.file_page_panels(self.new, 2)
+        app.forget_file_panels(self.new)
+        answer = '[{"x1": 0, "y1": 0, "x2": 300, "y2": 450}]'
+        # A page the cut reads with confidence: before, it never went further.
+        sure = {"segmented": True, "source": "auto", "panels": [
+            {"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.5}, {"x": 0.0, "y": 0.5, "w": 1.0, "h": 0.5}]}
+        with patch("app.vision_model_ready", return_value=True), \
+             patch("app.load_app_settings", return_value={"visionReadsEveryPage": False}), \
+             patch("app.panel_finder.detect_panels", return_value=sure), \
+             patch("app.ask_vision_model", return_value=answer) as ask:
+            reading = app.file_page_panels(self.new, 2)
+            ask.assert_called()
+            self.assertEqual(reading["source"], "vlm")
+            ask.reset_mock()
+            app.file_page_panels(self.new, 2)
+            ask.assert_not_called()  # asked once; the model's reading stands
 
     def test_a_fix_on_one_copy_fixes_the_same_page_in_the_others(self):
         app.ensure_page_fingerprints(self.new)

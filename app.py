@@ -16403,9 +16403,23 @@ def page_panels_settled(file_id: int, index: int, *, allow_vision: bool) -> bool
     if record is None:
         return False
     vision = allow_vision and vision_model_ready()
-    every = vision and bool(load_app_settings().get("visionReadsEveryPage"))
+    every = _vision_reads_page(store, file_id, pages[index], record, vision)
     stale, upgrade = _reading_due(record, _file_signature(path), panel_model_session(), vision, every)
     return not stale and not upgrade
+
+
+def _vision_reads_page(store: Any, file_id: int, member: str, record: dict[str, Any] | None, vision: bool) -> bool:
+    """Whether the vision connector reads this page whatever the local tiers
+    make of it: every page, when so set, or a page a person asked to be
+    scanned again that only the local tiers have read since. Scan again is
+    for the model's eyes (the owner, 2026-10-16: it "doesn't seem to reach
+    back to the AI model"); with "every page" off, a page the cut was sure of
+    used to be answered by the cut alone."""
+    if not vision:
+        return False
+    if load_app_settings().get("visionReadsEveryPage"):
+        return True
+    return (record is None or record["source"] in ("auto", "model")) and store.page_scan_asked(file_id, member)
 
 
 def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) -> dict[str, Any]:
@@ -16426,8 +16440,8 @@ def _file_page_panels(file_id: int, index: int, *, allow_vision: bool = True) ->
     vision = allow_vision and vision_model_ready()
     # Whether the connector reads every page, or only what the local tiers
     # could not: a local reading can be wrong while sure, and only a model
-    # questions it.
-    every = vision and bool(load_app_settings().get("visionReadsEveryPage"))
+    # questions it. A page asked to be scanned again is read by it too.
+    every = _vision_reads_page(store, file_id, member, record, vision)
     direction = store.file_reading_direction(file_id)
     stale, upgrade = _reading_due(record, signature, session, vision, every)
     hashes: tuple[str, str] | None = None
