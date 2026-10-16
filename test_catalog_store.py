@@ -6640,6 +6640,32 @@ class ComicCoverTests(_ComicCatalogTestCase):
         self.assertEqual(series["cover"], "https://covers/one.jpg", "issue 1's face, through the copy that is here")
 
 
+class ComicPagePanelForgetTests(_ComicCatalogTestCase):
+    """Scan pages for panels again forgets the comic's automatic readings,
+    not one copy's: a page's reading is found on any copy of the comic
+    (`comic_page_panels`), so a forget that left the other copy's in place
+    had the page answered with the very reading it was asked to forget."""
+
+    def test_forgetting_a_comics_panels_forgets_them_on_every_copy_keeping_a_persons(self):
+        boxes = [{"x": 0, "y": 0, "w": 1, "h": 0.5}, {"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        hand = [{"x": 0, "y": 0, "w": 1, "h": 1, "order": 0}]
+        two = self.file["Example 002.cbz"]
+        self.store.set_page_panels(self.a, "p1.jpg", "sig", "vlm", boxes, True, page_hash="h1", page_dhash="d1")
+        self.store.set_page_panels(self.b, "p1.jpg", "sig", "vlm", boxes, True, page_hash="h1", page_dhash="d1")
+        self.store.set_page_panels(self.b, "p2.jpg", "sig", "manual", hand, True, page_hash="h2", page_dhash="d2")
+        self.store.set_page_panels(two, "p1.jpg", "sig", "auto", boxes, True, page_hash="h1", page_dhash="d1")
+        self.assertEqual(self.store.forget_automatic_page_panels(self.a), {"forgotten": 2, "kept": 1})
+        self.assertIsNone(self.store.comic_page_panels(self.a, "h1", "d1", near=0),
+                          "nothing automatic of the comic's is left to answer the page with")
+        self.assertIsNone(self.store.page_panels(self.b, "p1.jpg"), "the other copy's reading went with it")
+        self.assertEqual(self.store.page_panels(self.b, "p2.jpg")["source"], "manual", "a person's fix stands")
+        self.assertEqual(self.store.comic_page_panels(self.a, "h2", "d2", near=0)["source"], "manual",
+                         "and still answers its page on this copy")
+        self.assertIsNotNone(self.store.page_panels(two, "p1.jpg"), "another issue's readings are its own")
+        self.assertEqual([(h["source"], h["reason"]) for h in self.store.page_panel_history(self.b, "p1.jpg")],
+                         [("vlm", "forgotten")], "kept in the history like this copy's")
+
+
 class PersonalIssueDataTests(_ComicCatalogTestCase):
     """docs/READING_STATE_PLAN.md step 5: merges, rebuilds and re-matches keep
     what profiles did with an issue -- ratings, reading, a chosen cover."""

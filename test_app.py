@@ -12342,6 +12342,20 @@ class ComicPagePanelTests(_ComicCopiesTestCase):
         self.assertEqual(sorted((panel["x"], panel["y"]) for panel in reading["panels"]), sorted((b["x"], b["y"]) for b in boxes))
         self.assertEqual(self.store.page_panels(self.new, "p2.jpg")["source"], "vlm", "and kept as this page's")
 
+    def test_scanning_a_comics_panels_again_reads_the_page_afresh_not_from_another_copy(self):
+        # Scan pages for panels again, on either copy (the owner, 2026-10-16:
+        # "Scan panels again isn't working" -- the page came back with the
+        # other copy's reading, the one being replaced).
+        self._vlm_reading_on_old_page_two()
+        app.file_page_panels(self.new, 2)
+        app.forget_file_panels(self.new)
+        fresh = {"segmented": True, "source": "auto", "panels": [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}]}
+        with patch("app.panel_finder.detect_panels", return_value=fresh) as detect:
+            reading = app.file_page_panels(self.new, 2)
+        detect.assert_called()
+        self.assertEqual(reading["source"], "auto", "worked out again, not the old copy's vision reading")
+        self.assertIsNone(self.store.page_panels(self.old, "02.jpg"), "the other copy's was forgotten with it")
+
     def test_a_fix_on_one_copy_fixes_the_same_page_in_the_others(self):
         app.ensure_page_fingerprints(self.new)
         fixed = [{"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.5}, {"x": 0.0, "y": 0.5, "w": 1.0, "h": 0.5}]

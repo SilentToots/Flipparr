@@ -5390,14 +5390,27 @@ class CatalogStore:
             return cursor.rowcount > 0
 
     def forget_automatic_page_panels(self, file_id: int) -> dict[str, int]:
-        """Forget every automatic reading of a file's pages, keeping a person's, so they are read again as reached."""
+        """Forget every automatic reading of a comic's pages, keeping a person's, so they are read again as reached.
+
+        The comic's, not the file's: a page with no reading of its own takes
+        one of the same page from any copy of the comic (`comic_page_panels`),
+        present or replaced, so a forget of this copy alone was answered with
+        the reading it had just forgotten."""
         with self._write_lock, self._connect() as connection:
+            comic = self._comic_of_file(connection, file_id)
+            if comic is None:
+                copies, args = "file_id=?", (int(file_id),)
+            else:
+                link = "file_issue_links" if comic[0] == "issue" else "file_edition_links"
+                column = "issue_id" if comic[0] == "issue" else "edition_id"
+                copies = f"(file_id=? OR file_id IN (SELECT file_id FROM {link} WHERE {column}=?))"
+                args = (int(file_id), comic[1])
             kept = connection.execute(
-                "SELECT COUNT(*) FROM page_panels WHERE file_id=? AND source='manual'", (int(file_id),),
+                f"SELECT COUNT(*) FROM page_panels WHERE {copies} AND source='manual'", args,
             ).fetchone()[0]
-            self._archive_page_panels(connection, "file_id=? AND source<>'manual'", (int(file_id),), None, "forgotten")
+            self._archive_page_panels(connection, f"{copies} AND source<>'manual'", args, None, "forgotten")
             cursor = connection.execute(
-                "DELETE FROM page_panels WHERE file_id=? AND source<>'manual'", (int(file_id),),
+                f"DELETE FROM page_panels WHERE {copies} AND source<>'manual'", args,
             )
             return {"forgotten": cursor.rowcount, "kept": int(kept)}
 
