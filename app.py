@@ -503,11 +503,14 @@ GCD_API_BASE = "https://www.comics.org/api"
 METRON_API_BASE = "https://metron.cloud/api"
 ANTHROPIC_API_BASE = "https://api.anthropic.com/v1"
 ANTHROPIC_API_VERSION = "2023-06-01"
-# The vision model panel view asks, when the Claude connector is on. Haiku:
-# a page is a few thousand tokens, and this is a question about boxes.
-# Measured 2026-09-22 on real pages (see the Reader settings): Sonnet 5 read
-# every layout tried; Haiku guesses a grid on hard ones.
-VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-sonnet-5"
+# The vision model panel view asks, when the Claude connector is on.
+# Measured 2026-09-22 on real pages: Sonnet 5 read every layout tried; Haiku
+# 4.5 guessed a grid on hard ones. Measured again 2026-10-16 on 86 pages the
+# owner fixed by hand (tools/vision_model_test.py): Sonnet 5.5's boxes agree
+# with his fixes 0.80 (mean IoU) against Sonnet 5's 0.66, at the same price,
+# with shorter answers and none cut off at max_tokens; Haiku 5.5 0.73 at a
+# twelfth of the price.
+VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-sonnet-5-5"
 OPENAI_API_BASE = "https://api.openai.com/v1"
 # gpt-4o-mini bills a page at ~37k tokens (images at 33x) and guessed a grid
 # through an eight-panel page; 4.1-mini is a tenth the tokens, says "no
