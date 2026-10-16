@@ -54,6 +54,9 @@ CONFIGS: dict[str, tuple[str, dict[str, Any]]] = {
     # At its default it can spend the whole 1,024-token answer thinking (the
     # first dry run did): thinking off is the fair test of what it sees.
     "haiku-5.5-no-thinking": ("claude-haiku-5-5", {"thinking": {"type": "disabled"}}),
+    # Haiku's thinking can use up the reader's 1,024-token answer; with room
+    # to finish, is it the answer that changes, or only the cost?
+    "haiku-5.5-2k": ("claude-haiku-5-5", {"max_tokens": 2048}),
 }
 
 
@@ -136,7 +139,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     rows = [row for row in store.manual_page_panels_with_history() if row["panels"]]
     pages: list[dict[str, Any]] = []
     started = time.monotonic()
-    for row in _sample(rows, args.pages):
+    for row in _sample(rows, args.pages + args.skip)[args.skip:]:
         file_id, member = row["fileId"], row["member"]
         page: dict[str, Any] = {"fileId": file_id, "member": member, "manual": len(row["panels"]), "configs": {}}
         try:
@@ -227,6 +230,7 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path, help="where the report goes (outside the repository)")
     parser.add_argument("--pages", type=int, default=90)
     parser.add_argument("--configs", nargs="+", default=list(CONFIGS), choices=list(CONFIGS))
+    parser.add_argument("--skip", type=int, default=0, help="leave out the first N sampled pages (an earlier run's)")
     args = parser.parse_args()
     if not args.spend:
         raise SystemExit("this asks Claude about every page on the configured key; pass --spend to agree to that")
