@@ -12069,6 +12069,29 @@ class OvernightPanelTests(_ComicCopiesTestCase):
         self.assertEqual((status["visionChoices"][-1], status["budgetChoices"], status["visionBudget"]),
                          (5000, [0, 10, 25, 50, 100, 200], 0))
 
+    def test_the_examples_are_cached_and_the_page_is_not(self):
+        _url, raw = app._vision_request("anthropic", "key", b"page", "boxes?", [(b"one", "first"), (b"two", "second")])
+        content = json.loads(raw)["messages"][0]["content"]
+        self.assertEqual([block["type"] for block in content], ["image", "text", "image", "text", "image", "text"])
+        marked = [index for index, block in enumerate(content) if "cache_control" in block]
+        self.assertEqual(marked, [3], "one mark, on the last example: everything before it is the cached prefix")
+        self.assertEqual(content[3]["cache_control"], {"type": "ephemeral"})
+        _url, raw = app._vision_request("anthropic", "key", b"page", "boxes?")
+        self.assertNotIn("cache_control", raw.decode(), "a page with no examples has nothing worth caching")
+        _url, raw = app._vision_request("openai", "key", b"page", "boxes?", [(b"one", "first")])
+        self.assertNotIn("cache_control", raw.decode(), "OpenAI caches by itself and refuses unknown fields")
+
+    def test_cached_tokens_are_priced_at_the_models_own_share(self):
+        usage = {"input_tokens": 1000, "cache_creation_input_tokens": 3000, "cache_read_input_tokens": 0, "output_tokens": 100}
+        tokens, _out, written, _model = app._vision_usage("anthropic", {"model": "claude-sonnet-5", "usage": usage})
+        self.assertEqual(tokens, 4000)
+        self.assertAlmostEqual(written, ((1000 + 3000 * 1.25) * 2 + 100 * 10) / 1e6)
+        usage = {"input_tokens": 1000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 3000, "output_tokens": 100}
+        _t, _o, read, _m = app._vision_usage("anthropic", {"model": "claude-sonnet-5", "usage": usage})
+        self.assertAlmostEqual(read, ((1000 + 3000 * 0.1) * 2 + 100 * 10) / 1e6)
+        _t, _o, cheaper, _m = app._vision_usage("anthropic", {"model": "claude-sonnet-5-5", "usage": usage})
+        self.assertAlmostEqual(cheaper, ((1000 + 3000 * 0.05) * 2 + 100 * 10) / 1e6, msg="Sonnet 5.5 reads its cache at a twentieth")
+
     def test_each_vision_call_is_kept_with_its_tokens_and_cost(self):
         import io
         answers = {

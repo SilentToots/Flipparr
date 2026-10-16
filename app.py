@@ -15626,6 +15626,15 @@ def _vision_request(provider: str, credential: str, image: bytes, prompt: str,
             content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                          "data": base64.b64encode(picture).decode("ascii")}})
             content.append({"type": "text", "text": text})
+        # The examples are the same page after page of one comic (a
+        # reader's newest hand-fixed pages, vision_examples), about 2,900
+        # of a page's 4,250 tokens: cached at the last of them, the next
+        # page within five minutes reads them at a tenth of the price
+        # (Anthropic's prompt caching, 2026-10-16). The page itself, after
+        # the mark, is never cached. Below the model's minimum (1,024
+        # tokens on Sonnet 5) the mark is ignored, not refused.
+        if examples:
+            content[2 * len(examples) - 1]["cache_control"] = {"type": "ephemeral"}
         return f"{ANTHROPIC_API_BASE}/messages", json.dumps({
             "model": VISION_MODEL, "max_tokens": 1024, "messages": [{"role": "user", "content": content}],
         }).encode()
@@ -15660,6 +15669,11 @@ VISION_PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet-5": (2.0, 10.0), "claude-sonnet-5-5": (2.0, 10.0), "claude-opus-5-5": (4.0, 20.0),
     "claude-opus-5": (5.0, 25.0), "claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-4-6": (3.0, 15.0),
 }
+# What a cached input token costs, as a share of the input price: a tenth on
+# most models, a twentieth on Sonnet 5.5 and Opus 5.5. A five-minute cache
+# write is 1.25x on all of them. From Anthropic's prompt-caching page,
+# 2026-10-16 (platform.claude.com/docs/en/build-with-claude/prompt-caching).
+VISION_CACHE_READ_SHARE: dict[str, float] = {"claude-sonnet-5-5": 0.05, "claude-opus-5-5": 0.05}
 # What one vision page costs when nothing has been measured yet: a page sent
 # at reading size is a couple of thousand input tokens and a short answer,
 # about half a cent at Sonnet's price (docs/OPERATING.md).
@@ -15677,9 +15691,11 @@ def _vision_usage(provider: str, payload: dict[str, Any]) -> tuple[int | None, i
         written = int(usage.get("cache_creation_input_tokens") or 0)
         cached = int(usage.get("cache_read_input_tokens") or 0)
         output = int(usage.get("output_tokens") or 0)
-        price = VISION_PRICES_PER_MTOK.get(model) or VISION_PRICES_PER_MTOK.get(VISION_MODEL)
+        priced = model if model in VISION_PRICES_PER_MTOK else VISION_MODEL
+        price = VISION_PRICES_PER_MTOK.get(priced)
+        read_share = VISION_CACHE_READ_SHARE.get(priced, 0.1)
         cost = None if price is None else (
-            (plain + written * 1.25 + cached * 0.1) * price[0] + output * price[1]) / 1_000_000
+            (plain + written * 1.25 + cached * read_share) * price[0] + output * price[1]) / 1_000_000
         return plain + written + cached, output, cost, model
     prompt_tokens = usage.get("prompt_tokens")
     completion = usage.get("completion_tokens")
