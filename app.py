@@ -3034,12 +3034,19 @@ def _safe_urlopen(request: urllib.request.Request, *, timeout: float):
     try:
         return _HTTP_OPENER.open(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
+        # The start of the body is kept: it is the only place a service says
+        # why it refused -- Anthropic answers a 400 to a key it knows, and the
+        # connection test could only say "(400)" (2026-10-16).
+        try:
+            body = exc.read(4096) or b""
+        except Exception:  # noqa: BLE001 -- an unreadable body is an empty one
+            body = b""
         raise urllib.error.HTTPError(
             _redacted_upstream_url(exc.geturl() or request.full_url),
             exc.code,
             exc.msg,
             exc.headers,
-            None,
+            io.BytesIO(body),
         ) from None
     except (urllib.error.URLError, TimeoutError):
         raise urllib.error.URLError("upstream service unavailable") from None
@@ -3500,6 +3507,27 @@ def post_multipart_file_json(
     raise UploadRedirected("the upload was redirected more than once")
 
 
+def _vision_key_refusal(provider_id: str, company: str, exc: urllib.error.HTTPError) -> Exception:
+    """Why a vision connector refused its key check, in words a person can act on.
+
+    A key it does not know is a 401; a key it knows on an account it will not
+    serve -- no credit, billing not set up -- is a 400 whose only explanation
+    is the body. Those are the person's to fix, so they come back
+    as a ValueError (shown as said) rather than a gateway failure.
+    """
+    if exc.code in {401, 403}:
+        return exc
+    code, said = _vision_error(exc)
+    name = CONNECTOR_NAMES.get(provider_id, company)
+    if code in _VISION_QUOTA_CODES:
+        return ValueError(f"{company} knows this key, but the account behind it has no credit, so {name} "
+                          f"cannot answer. Add credit in {company}'s billing settings, then test again.")
+    said = str(support_safe(said) or "").strip()[:200]
+    if said:
+        return ValueError(f"{company} refused the key check ({exc.code}): {said}")
+    return exc
+
+
 def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = payload or {}
     if provider_id not in {"metron", "comic_vine", "anthropic", "openai"}:
@@ -3513,15 +3541,20 @@ def test_provider_connection(provider_id: str, payload: dict[str, Any] | None = 
         url = f"{METRON_API_BASE}/series/?page=1"
         data = fetch_provider_json(provider_id, url, credential, force=True)
         detail = f"Authenticated successfully; {int(data.get('count') or 0):,} series are available."
-    elif provider_id == "anthropic":
-        data = fetch_provider_json(provider_id, f"{ANTHROPIC_API_BASE}/models?limit=1", credential, force=True)
+    elif provider_id in VISION_PROVIDERS:
+        base, company = (ANTHROPIC_API_BASE, "Anthropic") if provider_id == "anthropic" else (OPENAI_API_BASE, "OpenAI")
+        try:
+            data = fetch_provider_json(provider_id, f"{base}/models" + ("?limit=1" if provider_id == "anthropic" else ""),
+                                       credential, force=True)
+        except urllib.error.HTTPError as exc:
+            refusal = _vision_key_refusal(provider_id, company, exc)
+            # What the service said is shown as said -- unless it says the
+            # key back, which Settings must never print.
+            if len(credential) >= 8 and credential in str(refusal):
+                refusal = ValueError(f"{company} refused the key check ({exc.code})")
+            raise refusal from None
         if not isinstance(data.get("data"), list):
-            raise ValueError("Anthropic did not recognise the API key")
-        detail = "API key verified successfully."
-    elif provider_id == "openai":
-        data = fetch_provider_json(provider_id, f"{OPENAI_API_BASE}/models", credential, force=True)
-        if not isinstance(data.get("data"), list):
-            raise ValueError("OpenAI did not recognise the API key")
+            raise ValueError(f"{company} did not recognise the API key")
         detail = "API key verified successfully."
     else:
         url = f"{COMIC_VINE_API_BASE}/issues/?" + urllib.parse.urlencode({

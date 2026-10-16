@@ -7333,6 +7333,46 @@ class VisionConnectorTests(unittest.TestCase):
         self.assertEqual(result["status"], "connected")
         self.assertIn("/models", fetch.call_args[0][1])
 
+    def _key_check_refused(self, status, body, key="k"):
+        error = urllib.error.HTTPError("https://api.anthropic.com/v1/models?limit=1", status, "no",
+                                       email.message.Message(), io.BytesIO(body))
+        with patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": key}}), \
+             patch.object(app._HTTP_OPENER, "open", side_effect=error), patch("app._wait_for_provider_slot"), \
+             patch.dict(app._PROVIDER_JSON_CACHE, {}, clear=True), patch("app.persist_provider_cache"):
+            app.test_provider_connection("anthropic", {})
+
+    def test_a_known_key_on_an_empty_account_says_so_rather_than_a_bare_400(self):
+        """A new key was refused with only "Provider request failed (400)" (2026-10-16)."""
+        empty = (b'{"type": "error", "error": {"type": "invalid_request_error", '
+                 b'"message": "Your credit balance is too low to access the Anthropic API."}}')
+        with self.assertRaisesRegex(ValueError, "has no credit"):
+            self._key_check_refused(400, empty)
+
+    def test_any_other_refusal_of_a_known_key_shows_what_the_service_said(self):
+        said = b'{"type": "error", "error": {"type": "invalid_request_error", "message": "This organization has been disabled."}}'
+        with self.assertRaisesRegex(ValueError, r"\(400\): This organization has been disabled\."):
+            self._key_check_refused(400, said)
+
+    def test_a_refusal_that_says_the_key_back_is_not_shown_as_said(self):
+        echo = b'{"type": "error", "error": {"type": "invalid_request_error", "message": "Key sk-ant-test-0042 is not allowed here."}}'
+        with self.assertRaises(ValueError) as raised:
+            self._key_check_refused(400, echo, key="sk-ant-test-0042")
+        self.assertEqual(str(raised.exception), "Anthropic refused the key check (400)")
+
+    def test_an_unknown_key_is_still_a_rejected_credential(self):
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self._key_check_refused(401, b'{"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}}')
+        self.assertEqual(raised.exception.code, 401)
+
+    def test_a_refusal_keeps_its_body_and_still_hides_the_address_key(self):
+        request = urllib.request.Request("https://service.invalid/api?api_key=very-secret")
+        original = urllib.error.HTTPError(request.full_url, 400, "no", email.message.Message(), io.BytesIO(b'{"error": "why"}'))
+        with patch.object(app._HTTP_OPENER, "open", side_effect=original), \
+                self.assertRaises(urllib.error.HTTPError) as raised:
+            app._safe_urlopen(request, timeout=1)
+        self.assertEqual(raised.exception.read(), b'{"error": "why"}')
+        self.assertNotIn("very-secret", raised.exception.geturl())
+
     def test_chatgpt_is_the_second_connector_behind_the_same_seam(self):
         definition = app.PROVIDER_DEFINITIONS["openai"]
         self.assertEqual(definition["credentialField"], "apiKey")
