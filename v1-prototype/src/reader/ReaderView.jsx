@@ -543,6 +543,9 @@ export function ReaderView({
     try {
       await apiRequest(`/api/v1/files/${fileId}/panels`, { method: "DELETE" });
       asking.current.clear();
+      // The new panels are what was asked for: shown framed as they arrive,
+      // not behind a whole-page look left on from before.
+      setOverview(false);
       setPanels((current) => Object.fromEntries(Object.entries(current).filter(([, reading]) => reading?.source === "manual")));
       setRereading("done");
     } catch {
@@ -722,6 +725,21 @@ export function ReaderView({
     if (at.whole) return { zoom: 1, pan: { x: 0, y: 0 } };
     return panelFocus(rects[at.panel], viewport, base);
   }, [pagePanels]);
+
+  // The whole page is a look at one page, not a mode (the owner, 2026-10-16):
+  // left on from a double-tap or a pinch -- two quick taps on a phone are
+  // one -- it showed every page whole from then on, no panel framed and no
+  // "Finding panels", and only turning panel view off and on brought them
+  // back. A turn to another page goes back to its panels, from the first.
+  const overviewPage = useRef(index);
+  useEffect(() => {
+    if (overviewPage.current === index) return;
+    overviewPage.current = index;
+    if (overviewRef.current) {
+      setOverview(false);
+      setPanel(0);
+    }
+  }, [index]);
 
   // Where the page sits for the panel in view: once the shown image has
   // loaded (`spreads` records that) and again for every step.
@@ -1493,7 +1511,8 @@ export function ReaderView({
       <span className="reader-count">{count
         ? (panelMode && !overview
           ? `${findingPanels ? "Finding panels" : wholePageStep ? "Whole page" : `Panel ${shownStep.panel + 1} of ${pagePanels(index).length}`} · ${index + 1} of ${count}`
-          : `${index + 1} of ${count}`)
+          // Said, so the look at the whole page is never mistaken for panel view not working.
+          : `${panelMode ? "Whole page · " : ""}${index + 1} of ${count}`)
         : "—"}{spread ? " · spread" : ""}</span>
       {count ? <div className="reader-scrubber">
         {/* The page under the thumb, before letting go: skimming back for the
