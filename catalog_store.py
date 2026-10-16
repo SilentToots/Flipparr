@@ -5691,9 +5691,17 @@ class CatalogStore:
                           COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0)
                      FROM vision_usage WHERE overnight=1""",
             ).fetchone()
+            # Everything the key has paid for since calls were priced: pages
+            # opened, the overnight read, cover ratings, reading orders.
+            every = connection.execute(
+                """SELECT COALESCE(SUM(cost_usd), 0), MIN(recorded_at), COUNT(*),
+                          COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) FROM vision_usage""",
+            ).fetchone()
         return {"perPage": average[0], "measuredCalls": int(average[1] or 0),
                 "overnightSpent": float(overnight[0] or 0), "overnightSince": overnight[1],
-                "overnightCalls": int(overnight[2] or 0), "overnightUnpriced": int(overnight[3] or 0)}
+                "overnightCalls": int(overnight[2] or 0), "overnightUnpriced": int(overnight[3] or 0),
+                "allSpent": float(every[0] or 0), "allSince": every[1], "allCalls": int(every[2] or 0),
+                "allUnpriced": int(every[3] or 0)}
 
     def overnight_vision_pages_unpriced(self, since: str | None) -> int:
         """The overnight read's vision pages from before its calls were priced
@@ -6765,6 +6773,13 @@ class CatalogStore:
             for request_id in linked & wanted:
                 audience.setdefault(request_id, set()).add(int(row["requested_by"]))
         return audience
+
+    def notified(self, user_id: int, group_key: str) -> bool:
+        """Whether a profile was ever told about this thing, read or not."""
+        with self._connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM notifications WHERE user_id=? AND group_key=? LIMIT 1", (int(user_id), group_key),
+            ).fetchone() is not None
 
     def record_notification(
         self, user_id: int, kind: str, group_key: str, payload: dict[str, Any], *,

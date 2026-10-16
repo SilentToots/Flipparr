@@ -12142,6 +12142,42 @@ class OvernightPanelTests(_ComicCopiesTestCase):
         self.settings["visionModel"] = "claude-opus-9"
         self.assertEqual(app.current_vision_model(), app.VISION_MODEL, "an id not on the list is not asked")
 
+    def test_a_model_being_retired_is_told_to_the_admin_once(self):
+        app._VISION_LIFECYCLE.clear()
+        self.addCleanup(app._VISION_LIFECYCLE.clear)
+        said = {"id": "claude-haiku-5-5", "display_name": "Claude Haiku 5.5", "lifecycle": "deprecated",
+                "retires_at": "2027-04-01T00:00:00Z"}
+        clock = [1000.0]
+        real = app.vision_model_lifecycle
+        with patch("app.load_provider_config", return_value={"anthropic": {"enabled": True, "apiKey": "k"}}), \
+             patch("app.vision_provider", return_value="anthropic"), \
+             patch("app.fetch_provider_json", return_value=said) as asked, \
+             patch("app.vision_model_lifecycle", side_effect=lambda model: real(model, now=lambda: clock[0])):
+            app.check_vision_models_lifecycle()
+            self.assertIn("/models/claude-haiku-5-5", asked.call_args_list[0][0][1])
+            first = len(asked.call_args_list)
+            app.check_vision_models_lifecycle()
+            self.assertEqual(len(asked.call_args_list), first, "asked once a day, not every minute")
+            rows = [row for row in self.store.notifications_for(ADMIN_USER_ID) if row["kind"] == "vision_model_retiring"]
+            self.assertEqual(len(rows), 1)
+            view = app.notification_view(rows[0], app.Viewer(id=ADMIN_USER_ID, name="Admin", role="admin"))
+            self.assertEqual(view["title"], "Claude Haiku 5.5 is being retired")
+            self.assertIn("2027-04-01", view["detail"])
+            self.store.mark_notifications_read(ADMIN_USER_ID)
+            clock[0] += app.VISION_LIFECYCLE_CHECK_SECONDS + 1
+            app.check_vision_models_lifecycle()
+            again = [row for row in self.store.notifications_for(ADMIN_USER_ID) if row["kind"] == "vision_model_retiring"]
+            self.assertEqual(len(again), 1, "told once: the next morning's check does not raise it again")
+            self.assertEqual(app.vision_model_status()["retiring"], "Anthropic is retiring it on 2027-04-01.")
+        self.assertEqual(app._retiring({"lifecycle": "active"}), "")
+        self.assertEqual(app._retiring({"lifecycle": "retired"}), "Anthropic has retired it.")
+
+    def test_the_key_s_whole_spend_is_shown_beside_the_overnight_share(self):
+        self._spent(0.002, overnight=True, times=3)
+        self._spent(0.01, overnight=False, times=2)
+        spent = app.vision_model_status()["spent"]
+        self.assertEqual((spent["all"], spent["overnight"], spent["calls"]), (0.03, 0.01, 5))
+
     def test_the_examples_are_cached_and_the_page_is_not(self):
         _url, raw = app._vision_request("anthropic", "key", b"page", "boxes?", [(b"one", "first"), (b"two", "second")])
         content = json.loads(raw)["messages"][0]["content"]

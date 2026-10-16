@@ -4,7 +4,7 @@
 // a night of the overnight read costs on it; the release's pick is marked.
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api.js";
-import { SettingsField } from "../components/SettingsControls.jsx";
+import { SettingsFacts, SettingsField } from "../components/SettingsControls.jsx";
 import { GlassSelect } from "../components/glass.jsx";
 
 const dollars = (amount) => (amount >= 10 ? `$${Math.round(amount)}` : amount >= 0.1 ? `$${amount.toFixed(2)}` : `$${amount.toFixed(3)}`);
@@ -12,7 +12,17 @@ const dollars = (amount) => (amount >= 10 ? `$${Math.round(amount)}` : amount >=
 /** A choice as the select names it: the model and its price, short enough for a phone's field. */
 export function modelOption(choice, nightlyPages) {
   const price = nightlyPages ? `about ${dollars(choice.perNight)} a night` : `about ${dollars(choice.perPage)} a page`;
-  return { value: choice.id, label: `${choice.name.replace(/^Claude /, "")} · ${price}` };
+  return { value: choice.id, label: `${choice.name.replace(/^Claude /, "")} · ${choice.retiring ? "retiring" : price}` };
+}
+
+/** What the key has spent since calls were priced, and the overnight read's share. */
+export function spentFacts(spent) {
+  if (!spent || !spent.calls) return [];
+  const since = spent.since ? new Date(spent.since).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+  return [
+    [since ? `Spent on your key since ${since}` : "Spent on your key", `About ${dollars(spent.all)}`],
+    ["Of it, the overnight read", `About ${dollars(spent.overnight)}`],
+  ];
 }
 
 /** The line under it: what the chosen model is for, and whether it is this release's pick. */
@@ -45,6 +55,8 @@ export function VisionModelField() {
       <GlassSelect label="Model" disabled={saving} value={current ? current.id : ""} placeholder={status.current}
         onChange={choose} options={status.choices.map((choice) => modelOption(choice, status.nightlyPages))} />
     </SettingsField>
+    {status.retiring ? <p className="workbench-error" role="status">{status.retiring} Choose another model here.</p> : null}
+    <SettingsFacts facts={spentFacts(status.spent)} />
     {error ? <p className="workbench-error" role="alert">{error}</p> : null}
   </>;
 }

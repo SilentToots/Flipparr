@@ -488,7 +488,12 @@ $0.0005 a page; the estimate is used until 20 pages are measured). Which
 Claude model reads panels is chosen under Settings › Reader › Vision
 assistant › Model, from the models Flipparr has measured on hand-fixed pages,
 each shown with what a night costs on it; `FLIPPARR_VISION_MODEL` sets any
-other as the default. An **overnight budget** ($10 to $200, none by
+other as the default. Under it, what the key has spent on vision since calls
+were priced, and the overnight read's share of it. Once a day Flipparr asks
+Anthropic's Models API whether the model in use is deprecated or retired
+(`lifecycle`, `retires_at`); if it is, every admin's bell says so once, with
+the date, and the Model field shows it. Flipparr never changes model by
+itself. An **overnight budget** ($10 to $200, none by
 default) stops the read's vision once it has spent that much in all, nights
 before pricing began counted at the estimate; the vision pages wait for a
 budget raised, and pages opened by hand are never held back by it. Every

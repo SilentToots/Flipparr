@@ -1851,6 +1851,18 @@ def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | N
                 if len(items) == 1 else "Their pages are damaged. Each stays readable until a good copy passes its checks.",
                 "tone": "warning",
                 "target": {"view": "metadata"}}
+    if row["kind"] == "vision_model_retiring":
+        if not viewer.is_admin:
+            return None
+        name = str(payload.get("name") or payload.get("model") or "The vision model")
+        retired = payload.get("lifecycle") == "retired"
+        when = str(payload.get("retiresAt") or "")[:10]
+        return {**base,
+                "title": f"{name} has been retired" if retired else f"{name} is being retired",
+                "detail": ("Panel view cannot ask it any more. Choose another model in Settings › Reader."
+                           if retired else f"Anthropic retires it{f' on {when}' if when else ' soon'}. Choose another model in Settings › Reader."),
+                "tone": "warning",
+                "target": {"view": "settings", "section": "reader"}}
     if row["kind"] == "connector_trouble":
         if not viewer.is_admin:
             return None
@@ -18830,6 +18842,12 @@ def overnight_panels_worker(stop_event: threading.Event = _OVERNIGHT_STOP) -> No
     while not stop_event.wait(OVERNIGHT_POLL_SECONDS):
         worker_beat("overnight")
         try:
+            # Once a day (it keeps its own answer): is Anthropic retiring the
+            # model panel view asks?
+            try:
+                check_vision_models_lifecycle()
+            except Exception as exc:  # noqa: BLE001 -- the read goes on whatever the check says
+                log_exception("vision_lifecycle_check_failed", exc, level="warning")
             settings = load_app_settings()
             if not settings.get("overnightPanels"):
                 continue
@@ -18892,20 +18910,86 @@ def _vision_page_price(store: Any, model: str) -> tuple[float, bool, dict[str, A
     return price, measured, summary
 
 
+# What Anthropic says of each model's lifecycle (GET /v1/models/{id}:
+# `lifecycle` active/deprecated/retired, `retires_at`; the Models API,
+# checked 2026-10-16), asked once a day by the overnight worker. A model
+# being retired is the admin's to replace -- Flipparr never switches on its
+# own, since what spends their key is theirs to choose.
+VISION_LIFECYCLE_CHECK_SECONDS = 24 * 3600
+_VISION_LIFECYCLE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def vision_model_lifecycle(model: str, *, now: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
+    """One model's lifecycle as Anthropic states it, asked at most once a day;
+    None when it cannot be asked (no Claude key) and nothing is known yet."""
+    cached = _VISION_LIFECYCLE.get(model)
+    if cached and now() - cached[0] < VISION_LIFECYCLE_CHECK_SECONDS:
+        return cached[1]
+    credential = str((load_provider_config().get("anthropic") or {}).get("apiKey") or "").strip()
+    if not credential:
+        return cached[1] if cached else None
+    try:
+        data = fetch_provider_json("anthropic", f"{ANTHROPIC_API_BASE}/models/{urllib.parse.quote(model, safe='')}",
+                                   credential, force=True)
+    except Exception as exc:  # noqa: BLE001 -- not knowing is not a warning; try again tomorrow
+        log_event("vision_model_lifecycle_unknown", "warning", model=model, error=type(exc).__name__)
+        _VISION_LIFECYCLE[model] = (now(), cached[1] if cached else {})
+        return cached[1] if cached else None
+    info = {"model": model, "name": str(data.get("display_name") or model),
+            "lifecycle": str(data.get("lifecycle") or "active"), "retiresAt": data.get("retires_at")}
+    _VISION_LIFECYCLE[model] = (now(), info)
+    return info
+
+
+def check_vision_models_lifecycle() -> None:
+    """The overnight worker's daily look: the model asked and the ones on
+    offer. The one in use being retired goes in every admin's bell, once."""
+    if vision_provider() != "anthropic":
+        return
+    current = current_vision_model()
+    for model in dict.fromkeys([current, *VISION_MODEL_IDS]):
+        info = vision_model_lifecycle(model)
+        if model == current and info and info.get("lifecycle") in ("deprecated", "retired"):
+            store = catalog_store()
+            key = f"model:{model}:{info['lifecycle']}"
+            for user in store.list_users():
+                # Once for each change: a dismissed warning is not raised again every morning.
+                if user["role"] == "admin" and not user["disabled"] and not store.notified(int(user["id"]), key):
+                    store.record_notification(int(user["id"]), "vision_model_retiring", key, info)
+
+
+def _retiring(info: dict[str, Any] | None) -> str:
+    """A model's retirement, said plainly, or "" while it is active."""
+    if not info or info.get("lifecycle") not in ("deprecated", "retired"):
+        return ""
+    if info["lifecycle"] == "retired":
+        return "Anthropic has retired it."
+    when = str(info.get("retiresAt") or "")[:10]
+    return f"Anthropic is retiring it{f' on {when}' if when else ''}."
+
+
 def vision_model_status() -> dict[str, Any]:
     """Settings > Reader: the models on offer, each with what a night of the
-    overnight read would cost on it, and which one is asked."""
+    overnight read would cost on it, which one is asked, whether Anthropic
+    is retiring any of them, and what the key has spent."""
     store = catalog_store()
     settings = load_app_settings()
     pages = int(settings.get("overnightVisionPages") or 0)
     choices = []
     for choice in VISION_MODEL_CHOICES:
         price, measured, _summary = _vision_page_price(store, choice["id"])
+        known = _VISION_LIFECYCLE.get(choice["id"], (0, {}))[1]
         choices.append({**choice, "perPage": price, "measured": measured, "perNight": round(price * pages, 2),
-                        "default": choice["id"] == VISION_MODEL})
+                        "default": choice["id"] == VISION_MODEL, "retiring": _retiring(known)})
     current = current_vision_model()
+    view = _vision_cost_view()
+    summary = store.vision_cost_summary()
     return {"current": current, "chosen": str(settings.get("visionModel") or ""), "default": VISION_MODEL,
-            "other": current not in VISION_MODEL_IDS, "nightlyPages": pages, "choices": choices}
+            "other": current not in VISION_MODEL_IDS, "nightlyPages": pages, "choices": choices,
+            "retiring": _retiring(_VISION_LIFECYCLE.get(current, (0, {}))[1]),
+            "spent": {"all": round(summary["allSpent"] + summary["allUnpriced"] * view["perPage"], 2),
+                      "overnight": round(summary["overnightSpent"] + summary["overnightUnpriced"] * view["perPage"], 2),
+                      "since": summary["allSince"], "calls": summary["allCalls"]}}
 
 
 def _vision_cost_view() -> dict[str, Any]:

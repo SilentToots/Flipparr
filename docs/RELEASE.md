@@ -166,6 +166,10 @@ You lose manual corrections, aliases and request history — not files.
   Repeated example pages are sent with prompt caching. Settings › Reader ›
   Vision assistant › Model chooses between Haiku 5.5 and Sonnet 5.5, each
   with what a night costs on it; `FLIPPARR_VISION_MODEL` still names another.
+  Beneath it, what the key has spent on vision in all and the overnight
+  read's share; and a warning, in the bell once and in the field, when
+  Anthropic deprecates or retires the model in use (its Models API, checked
+  daily).
 - *Settings, easier to scan* (web and Flipparr View): every card says what
   it is for in one sentence, each switch in one line, and the rest waits
   under a closed "More about this"; what is set or happened reads as short
