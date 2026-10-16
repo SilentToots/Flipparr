@@ -516,6 +516,18 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 # against $0.0044). At 1,024 tokens its thinking ran out on 10 of 97 pages,
 # hence VISION_MAX_TOKENS. The owner chose it.
 VISION_MODEL = os.environ.get("FLIPPARR_VISION_MODEL") or "claude-haiku-5-5"
+# The models an admin may choose between in Settings > Reader, each one
+# measured on the owner's hand-fixed pages (tools/vision_model_test.py,
+# 2026-10-16): a short list Flipparr has tested rather than any model id,
+# because a model's general standing did not predict this task (Haiku 5.5
+# beat Sonnet 5 there). FLIPPARR_VISION_MODEL still names any other.
+VISION_MODEL_CHOICES: tuple[dict[str, str], ...] = (
+    {"id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "label": "Lowest cost",
+     "detail": "Closest to your hand fixes in the October test, at a tenth of Sonnet's price."},
+    {"id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "label": "Sharpest boxes",
+     "detail": "Draws the most exact boxes before Flipparr checks them, at about ten times the price."},
+)
+VISION_MODEL_IDS = frozenset(choice["id"] for choice in VISION_MODEL_CHOICES)
 # Room for a model that thinks before it answers (Haiku 5.5 and Sonnet 5.5
 # do by default): the answer is a few hundred tokens, the thinking as many.
 VISION_MAX_TOKENS = 2048
@@ -612,6 +624,10 @@ _APP_SETTINGS_DEFAULTS: dict[str, Any] = {
     # 0: no cap but the nightly page limit (the owner, 2026-10-16: "I have
     # a $100 credit").
     "overnightVisionBudget": 0,
+    # Which Claude model reads panels, from the short list Flipparr has
+    # tested (VISION_MODEL_CHOICES); empty: this release's pick, VISION_MODEL
+    # (the owner, 2026-10-16: "how would a general user make the best choice").
+    "visionModel": "",
 }
 RELEASE_SOURCES = ("usenet", "torrent", "direct_site")
 _APP_SETTINGS_BOOL_KEYS = frozenset({
@@ -657,6 +673,9 @@ def load_app_settings() -> dict[str, Any]:
                         settings[key] = value
                 elif key in (*_OVERNIGHT_HOUR_KEYS, "overnightVisionPages", "overnightVisionBudget"):
                     if _valid_overnight(key, value):
+                        settings[key] = value
+                elif key == "visionModel":
+                    if value == "" or value in VISION_MODEL_IDS:
                         settings[key] = value
                 elif key == "sourcePriority":
                     legacy = {old: new for new, old in _LEGACY_SOURCE_NAMES.items()}
@@ -714,6 +733,8 @@ def save_app_settings(patch: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Choose one of the nightly limits Flipparr offers")
         if key == "overnightVisionBudget" and not _valid_overnight(key, value):
             raise ValueError("Choose one of the overnight budgets Flipparr offers")
+        if key == "visionModel" and not (value == "" or value in VISION_MODEL_IDS):
+            raise ValueError("Choose one of the models Flipparr offers")
         if key == "sourcePriority":
             if not _is_source_order(value):
                 raise ValueError("List Usenet, torrents and direct downloads once each")
@@ -15680,7 +15701,7 @@ def _vision_request(provider: str, credential: str, image: bytes, prompt: str,
         if examples:
             content[2 * len(examples) - 1]["cache_control"] = {"type": "ephemeral"}
         return f"{ANTHROPIC_API_BASE}/messages", json.dumps({
-            "model": VISION_MODEL, "max_tokens": VISION_MAX_TOKENS, "messages": [{"role": "user", "content": content}],
+            "model": current_vision_model(), "max_tokens": VISION_MAX_TOKENS, "messages": [{"role": "user", "content": content}],
         }).encode()
     content = []
     for picture, text in pairs:
@@ -15734,13 +15755,13 @@ def _vision_usage(provider: str, payload: dict[str, Any]) -> tuple[int | None, i
     what they cost at the model's list price (None when it is not known)."""
     usage = payload.get("usage") if isinstance(payload, dict) else None
     usage = usage if isinstance(usage, dict) else {}
-    model = str(payload.get("model") or (VISION_MODEL if provider == "anthropic" else VISION_MODEL_OPENAI))
+    model = str(payload.get("model") or (current_vision_model() if provider == "anthropic" else VISION_MODEL_OPENAI))
     if provider == "anthropic":
         plain = int(usage.get("input_tokens") or 0)
         written = int(usage.get("cache_creation_input_tokens") or 0)
         cached = int(usage.get("cache_read_input_tokens") or 0)
         output = int(usage.get("output_tokens") or 0)
-        priced = model if model in VISION_PRICES_PER_MTOK else VISION_MODEL
+        priced = model if model in VISION_PRICES_PER_MTOK else current_vision_model()
         price = VISION_PRICES_PER_MTOK.get(priced)
         read_share = VISION_CACHE_READ_SHARE.get(priced, 0.1)
         cost = None if price is None else (
@@ -18802,6 +18823,41 @@ def start_overnight_panels_worker() -> threading.Thread:
     return _OVERNIGHT_THREAD
 
 
+def current_vision_model() -> str:
+    """The Claude model panel view asks: the admin's choice from the tested
+    list, else this release's pick (or FLIPPARR_VISION_MODEL's)."""
+    try:
+        chosen = str(load_app_settings().get("visionModel") or "")
+    except Exception:  # noqa: BLE001 -- unreadable settings ask the release's pick
+        chosen = ""
+    return chosen if chosen in VISION_MODEL_IDS else VISION_MODEL
+
+
+def _vision_page_price(store: Any, model: str) -> tuple[float, bool, dict[str, Any]]:
+    """What a page costs on one model: measured once 20 of its panel calls are
+    priced, else the documented estimate; and the summary it came from."""
+    summary = store.vision_cost_summary(model=model)
+    measured = summary["perPage"] is not None and summary["measuredCalls"] >= 20
+    price = float(summary["perPage"]) if measured else VISION_PAGE_COST_ESTIMATES.get(model, VISION_PAGE_COST_ESTIMATE)
+    return price, measured, summary
+
+
+def vision_model_status() -> dict[str, Any]:
+    """Settings > Reader: the models on offer, each with what a night of the
+    overnight read would cost on it, and which one is asked."""
+    store = catalog_store()
+    settings = load_app_settings()
+    pages = int(settings.get("overnightVisionPages") or 0)
+    choices = []
+    for choice in VISION_MODEL_CHOICES:
+        price, measured, _summary = _vision_page_price(store, choice["id"])
+        choices.append({**choice, "perPage": price, "measured": measured, "perNight": round(price * pages, 2),
+                        "default": choice["id"] == VISION_MODEL})
+    current = current_vision_model()
+    return {"current": current, "chosen": str(settings.get("visionModel") or ""), "default": VISION_MODEL,
+            "other": current not in VISION_MODEL_IDS, "nightlyPages": pages, "choices": choices}
+
+
 def _vision_cost_view() -> dict[str, Any]:
     """What a vision page costs -- measured when there are enough priced
     calls to say, else the documented estimate -- and what the overnight
@@ -18809,9 +18865,7 @@ def _vision_cost_view() -> dict[str, Any]:
     store = catalog_store()
     # The page price is the model now asked's: another's calls (Sonnet
     # before Haiku, 2026-10-16) would price tonight at last week's rate.
-    summary = store.vision_cost_summary(model=VISION_MODEL)
-    measured = summary["perPage"] is not None and summary["measuredCalls"] >= 20
-    per_page = float(summary["perPage"]) if measured else VISION_PAGE_COST_ESTIMATES.get(VISION_MODEL, VISION_PAGE_COST_ESTIMATE)
+    per_page, measured, summary = _vision_page_price(store, current_vision_model())
     # Nights read before calls were priced, at the price of the model that
     # read them -- measured once there is one (the estimate was half the
     # real price, 2026-10-16): counted, so a budget set after them knows
@@ -21118,6 +21172,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/api/v1/panels/overnight":
             self.send_json(overnight_panels_status())
+            return
+        if parsed_url.path == "/api/v1/vision/models":
+            self.send_json(vision_model_status())
             return
         if parsed_url.path == "/api/v1/library/cbz-conversion":
             self.send_json(cbz_conversion_status())

@@ -12001,6 +12001,10 @@ class OvernightWindowTests(unittest.TestCase):
             settings = app.load_app_settings()
             self.assertEqual((settings["overnightPanelsStart"], settings["overnightVisionPages"], settings["overnightPanels"]),
                              (22, 300, True))
+            with self.assertRaises(ValueError):
+                app.save_app_settings({"visionModel": "claude-opus-9"})
+            app.save_app_settings({"visionModel": "claude-sonnet-5-5"})
+            self.assertEqual(app.load_app_settings()["visionModel"], "claude-sonnet-5-5")
             app.save_app_settings({"overnightVisionPages": 5000, "overnightVisionBudget": 100})
             settings = app.load_app_settings()
             self.assertEqual((settings["overnightVisionPages"], settings["overnightVisionBudget"]), (5000, 100))
@@ -12120,6 +12124,23 @@ class OvernightPanelTests(_ComicCopiesTestCase):
         status = app.overnight_panels_status()
         self.assertEqual((status["visionChoices"][-1], status["budgetChoices"], status["visionBudget"]),
                          (5000, [0, 10, 25, 50, 100, 200], 0))
+
+    def test_the_admin_chooses_the_model_from_the_tested_list(self):
+        self.settings["visionModel"] = ""
+        self.assertEqual(app.current_vision_model(), app.VISION_MODEL, "no choice: this release's pick")
+        self.settings["visionModel"] = "claude-sonnet-5-5"
+        self.assertEqual(app.current_vision_model(), "claude-sonnet-5-5")
+        _url, raw = app._vision_request("anthropic", "key", b"page", "boxes?")
+        self.assertEqual(json.loads(raw)["model"], "claude-sonnet-5-5", "the page is asked of the model chosen")
+        status = app.vision_model_status()
+        self.assertEqual([choice["id"] for choice in status["choices"]], [c["id"] for c in app.VISION_MODEL_CHOICES])
+        self.assertEqual((status["current"], status["chosen"], status["other"]), ("claude-sonnet-5-5", "claude-sonnet-5-5", False))
+        haiku = next(choice for choice in status["choices"] if choice["id"] == "claude-haiku-5-5")
+        self.assertEqual(haiku["perNight"], round(app.VISION_PAGE_COST_ESTIMATES["claude-haiku-5-5"] * status["nightlyPages"], 2),
+                         "a night's cost at the nightly limit, from the estimate until pages are measured")
+        self.assertTrue(next(c for c in status["choices"] if c["id"] == app.VISION_MODEL)["default"])
+        self.settings["visionModel"] = "claude-opus-9"
+        self.assertEqual(app.current_vision_model(), app.VISION_MODEL, "an id not on the list is not asked")
 
     def test_the_examples_are_cached_and_the_page_is_not(self):
         _url, raw = app._vision_request("anthropic", "key", b"page", "boxes?", [(b"one", "first"), (b"two", "second")])

@@ -107,6 +107,7 @@ import { LibraryCbzConversion } from "./settings/cbz-conversion.jsx";
 import { DamagedComics } from "./settings/damaged-comics.jsx";
 import { DuplicateCopies } from "./settings/duplicate-copies.jsx";
 import { OvernightPanels } from "./settings/overnight-panels.jsx";
+import { VisionModelField } from "./settings/vision-model.jsx";
 import { HeaderContext, PageHeader, SegmentedTabs } from "./frame/header.jsx";
 import { useRefreshOnReturn } from "./refresh-on-return.js";
 import { DEMO_SERIES, LibraryView, catalogPending, logicalCatalogSeries } from "./library/LibraryView.jsx";
@@ -4054,6 +4055,7 @@ function SettingsView({ catalog, backendStatus, logicalSeriesCount, onNavigate, 
             </>}>
             {providers.filter((provider) => provider.kind === "reading").map((provider) => <Provider provider={provider} concise onConfigure={() => setEditingProvider(provider)} key={provider.id} />)}
             {providerError ? <p className="workbench-error" role="alert">{providerError}</p> : null}
+            {providers.some((provider) => provider.id === "anthropic" && provider.configured) ? <VisionModelField /> : null}
             <Toggle checked={everyPage} onChange={savingEveryPage ? () => {} : toggleEveryPage} title="Ask about every page"
               description="Its reading replaces Flipparr's own on every page you open." />
             <Toggle checked={forReaders} onChange={savingEveryPage ? () => {} : toggleForReaders} title="Readers' pages too"

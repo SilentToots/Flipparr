@@ -669,7 +669,7 @@ class HttpContractTests(unittest.TestCase):
 
     def test_the_system_routes_are_the_admins(self):
         import access_policy
-        for path in ("/api/v1/system/status", "/api/v1/system/diagnostics", "/api/v1/panels/overnight"):
+        for path in ("/api/v1/system/status", "/api/v1/system/diagnostics", "/api/v1/panels/overnight", "/api/v1/vision/models"):
             self.assertEqual(access_policy.route_access("GET", path), "admin", path)
 
     def test_every_request_is_logged_as_one_json_object(self):

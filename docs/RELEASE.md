@@ -163,8 +163,9 @@ You lose manual corrections, aliases and request history — not files.
   Sonnet 5.5, at a tenth of the price (about $0.0005 a page). Claude's
   answers are no longer refused for edges the page cannot vouch for, and
   the 230 stored pages that had been were re-read from their saved answers.
-  Repeated example pages are sent with prompt caching. `FLIPPARR_VISION_MODEL`
-  still chooses another model.
+  Repeated example pages are sent with prompt caching. Settings › Reader ›
+  Vision assistant › Model chooses between Haiku 5.5 and Sonnet 5.5, each
+  with what a night costs on it; `FLIPPARR_VISION_MODEL` still names another.
 - *Settings, easier to scan* (web and Flipparr View): every card says what
   it is for in one sentence, each switch in one line, and the rest waits
   under a closed "More about this"; what is set or happened reads as short

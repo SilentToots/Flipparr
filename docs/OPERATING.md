@@ -482,7 +482,11 @@ nightly limit (1,000 pages by default, up to 5,000; "No vision overnight"
 uses Flipparr's own reading). Each limit is shown with what it costs a
 night, priced from the vision model's own token counts on its last 500
 pages of the model Flipparr asks (Claude Haiku 5.5 since 2026-10-16, about
-$0.0005 a page; the estimate is used until 20 pages are measured). An **overnight budget** ($10 to $200, none by
+$0.0005 a page; the estimate is used until 20 pages are measured). Which
+Claude model reads panels is chosen under Settings › Reader › Vision
+assistant › Model, from the models Flipparr has measured on hand-fixed pages,
+each shown with what a night costs on it; `FLIPPARR_VISION_MODEL` sets any
+other as the default. An **overnight budget** ($10 to $200, none by
 default) stops the read's vision once it has spent that much in all, nights
 before pricing began counted at the estimate; the vision pages wait for a
 budget raised, and pages opened by hand are never held back by it. Every
