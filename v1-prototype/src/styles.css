@@ -1832,7 +1832,9 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    column, as Kindle's iPad bar is (the owner, 2026-10-11), on the header's
    scroll edge turned over -- the sidebar's frost, faded in over 24px at
    its top -- so the bar reads over any cover passing under it. The page
-   leaves room under its last row for it. */
+   leaves room under its last row for it. The cover sits 20px in, not 12:
+   at 12 its corner nearly met the pill's round end (the owner, 2026-10-17,
+   "cramped"), and 16 still read tight to him. */
 .continue-bar { position: fixed; z-index: 15; left: calc(var(--sidebar-inset) + var(--sidebar-width)); right: 0; bottom: 0; display: flex; padding: var(--space-24) var(--page-inset) calc(var(--space-16) + env(safe-area-inset-bottom)); pointer-events: none; }
 .continue-bar::before {
   content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
@@ -1849,28 +1851,45 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
 }
-.continue-bar-button { width: 100%; min-height: var(--space-64); display: flex; align-items: center; gap: var(--space-12); padding: var(--space-6) var(--space-24) var(--space-6) var(--space-12); overflow: hidden; border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; pointer-events: auto; }
+.continue-bar-button { width: 100%; min-height: var(--bottom-bar-height); display: flex; align-items: center; gap: var(--space-12); padding: var(--space-6) var(--space-24) var(--space-6) var(--space-20); overflow: hidden; border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; pointer-events: auto; }
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .continue-bar-button { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 }
-.continue-bar-cover { flex: none; width: var(--space-32); height: var(--space-48); border-radius: var(--radius-4); }
+.continue-bar-cover { flex: none; width: var(--space-28); height: var(--space-40); border-radius: var(--radius-4); }
 .continue-bar-text { flex: 1; min-width: 0; display: grid; gap: var(--space-2); }
 .continue-bar-text strong { overflow: hidden; font-size: var(--text-md); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .continue-bar-text small { color: var(--muted); font-size: var(--text-sm); }
 .continue-bar-icon { flex: none; color: var(--violet-text); }
-.reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-24) + var(--space-64) + var(--space-32) + env(safe-area-inset-bottom)); }
+.reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-24) + var(--bottom-bar-height) + var(--space-32) + env(safe-area-inset-bottom)); }
 @media (min-width: 641px) and (max-width: 900px) { .continue-bar { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); } }
 /* On a phone the bar takes the bottom edge and the tab bar rises above it,
-   8 px apart (the owner, 2026-10-11); a toast rises with them. */
+   8 px apart (the owner, 2026-10-11); a toast rises with them. Both sit as
+   low as iOS's own floating tab bar, 12px above the home indicator's 34px
+   rather than above all of it (the owner, 2026-10-17: the two took a fifth
+   of an iPhone's screen) -- never closer than 12px to the edge. Flipparr
+   View only: the web keeps its strip 4px off the edge for Safari's bar. */
 @media (max-width: 640px) {
-  .continue-bar { left: 0; padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom)); }
+  .reader-app { --app-bar-bottom: max(var(--space-12), calc(env(safe-area-inset-bottom) - var(--space-12))); }
+  .reader-app .sidebar { padding-bottom: calc(var(--app-bar-bottom) - var(--space-4)); }
+  .reader-app .toast { bottom: calc(var(--mobile-nav-height) + var(--app-bar-bottom)); }
+  .reader-app .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + var(--app-bar-bottom)); }
+  .continue-bar { left: 0; padding-bottom: var(--app-bar-bottom); transition: padding-left var(--motion-duration-morph) var(--motion-ease-morph); }
   .continue-bar::before {
     -webkit-mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent);
     mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent);
   }
-  .reader-app:has(.continue-bar) .sidebar { bottom: calc(var(--space-4) + var(--space-64) + var(--space-8)); }
-  .reader-app:has(.continue-bar) .toast { bottom: calc(var(--mobile-nav-height) + var(--space-8) + env(safe-area-inset-bottom) + var(--space-64) + var(--space-8)); }
-  .reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + env(safe-area-inset-bottom) + var(--space-80)); }
+  .reader-app:has(.continue-bar) .sidebar { bottom: calc(var(--space-4) + var(--bottom-bar-height) + var(--space-8)); }
+  .reader-app:has(.continue-bar) .toast { bottom: calc(var(--mobile-nav-height) + var(--app-bar-bottom) + var(--bottom-bar-height) + var(--space-8)); }
+  .reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + var(--app-bar-bottom) + var(--bottom-bar-height) + var(--space-8)); }
+  /* Scrolling down folds the tab bar into its circle, and the two bars
+     become one row: the circle drops to the bar's height at the left and the
+     bar makes room beside it, as Music's mini player moves inline with iOS's
+     minimized tab bar (Apple's HIG, Tab bars). Scrolling up, the top of the
+     page or a tap on the circle puts them back. The circle travels on the
+     tab bar's own curve, so the two move as one; reduced motion makes both
+     instant. */
+  .reader-app:has(.continue-bar) .sidebar.tab-bar-collapsed nav { translate: calc(var(--page-inset) + var(--bottom-bar-height) / 2 - 50vw) calc(var(--bottom-bar-height) + var(--space-8)); }
+  .reader-app:has(.sidebar.tab-bar-collapsed) .continue-bar { padding-left: calc(var(--page-inset) + var(--bottom-bar-height) + var(--space-8)); }
 }
 /* A hold opens the card's menu, not iOS's own image callout or a text selection. */
 .reader-app :is(.series-card, .issue-tile, .pull-card) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
@@ -2662,26 +2681,29 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
      at every phone width. It was 360px and centred, which on a 390-430px
      iPhone left it narrower than the content. The tabs share its width, so
      each is wider than it is tall -- the glass on the open one is a capsule,
-     not a circle. The glass is inset 8px on every side; the bottom padding is
+     not a circle. The glass is inset 4px on every side, as iOS's is; the bottom padding is
      a pixel short to leave room for the 1px border. */
-  .sidebar nav { box-sizing: border-box; width: 100%; max-width: 100%; margin-inline: auto; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-8) var(--space-8) calc(var(--space-8) - 1px); border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--violet); pointer-events: auto; }
+  .sidebar nav { box-sizing: border-box; width: 100%; max-width: 100%; margin-inline: auto; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-4) calc(var(--space-4) - 1px); border-bottom: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--violet); pointer-events: auto; }
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .sidebar nav { background: var(--mobile-nav-bg); -webkit-backdrop-filter: blur(var(--mobile-nav-blur)); backdrop-filter: blur(var(--mobile-nav-blur)); }
   }
-  .sidebar .nav-item { flex: 1 1 0; width: auto; min-width: 64px; height: auto; max-height: none; padding: var(--space-6) var(--space-8); border-radius: var(--radius-pill); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); color: var(--color-neutral-0); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; }
+  .sidebar .nav-item { flex: 1 1 0; width: auto; min-width: 64px; height: auto; max-height: none; padding: var(--space-4) var(--space-8); border-radius: var(--radius-pill); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); color: var(--color-neutral-0); font-weight: var(--weight-semibold); line-height: var(--leading-tight); white-space: nowrap; }
   /* A bar with only a couple of destinations (Flipparr View: Comics and
      Downloads) hugs them, centred, as iOS's floating tab bar does, rather
      than pushing them to its two ends. The web's always has more. */
   .sidebar nav:not(:has(.nav-item ~ .nav-item ~ .nav-item)) { width: fit-content; justify-content: center; }
   .sidebar nav:not(:has(.nav-item ~ .nav-item ~ .nav-item)) .nav-item { flex: 0 0 auto; width: 120px; }
-  /* The file's 24px icons with 12px labels on a 16px line: a 56px-tall tab,
-     about 83px wide, which is also the size of the glass that marks the open
-     one. (28px icons in a 64px tab, tried on 2026-09-16, read as too big.) */
+  /* The file's 24px icons with 12px labels on a 16px line: a 50px-tall tab
+     in a 58px bar, about iOS's own floating tab bar (the owner, 2026-10-17:
+     the bar took too much of an iPhone's screen; it was a 56px tab in a 72px
+     bar). The tab is also the size of the glass that marks the open one, and
+     well over the 44px a target needs. (28px icons in a 64px tab, tried on
+     2026-09-16, read as too big.) */
   .sidebar .nav-item > svg { width: 24px; height: 24px; }
   .sidebar .nav-item > span { display: inline; }
   /* A count is a warning state the file does not draw; it rides the icon's
      corner so the tabs keep the file's sizes. */
-  .sidebar .nav-item > b { display: grid; position: absolute; top: 4px; left: calc(50% + 6px); width: auto; min-width: 16px; padding: var(--space-2) var(--space-4); font-size: var(--text-2xs); }
+  .sidebar .nav-item > b { display: grid; position: absolute; top: var(--space-2); left: calc(50% + 6px); width: auto; min-width: 16px; padding: var(--space-2) var(--space-4); font-size: var(--text-2xs); }
   @media (hover: hover) { .sidebar .nav-item:not(.active):not(:disabled):hover { background: var(--wash-hover); } }
 
   /* 69:793: the active tab is the Comics variant -- a 20px icon and no gap --
@@ -2693,7 +2715,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
   .sidebar .nav-item.active { height: auto; background: transparent; }
   .sidebar .nav-item.active::before { display: none; }
 
-  /* Scrolling down tucks the bar into a 64px circle holding the current tab
+  /* Scrolling down tucks the bar into a 52px circle holding the current tab
      (.tab-bar-collapsed, from useCollapsingTabBar); scrolling up, the top of
      the page or a tap opens it again. The other tabs and the labels ease out
      rather than vanish. The glass's iOS curve was tried here first; it does
@@ -2713,9 +2735,9 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
      which tab was open. A pixel comes off the bottom padding instead, for the
      1px border along that edge, which had the icon half a pixel high, so the
      circle drops the border instead. */
-  .sidebar.tab-bar-collapsed nav { max-width: 64px; padding: 0; gap: 0; border-bottom-width: 0; }
+  .sidebar.tab-bar-collapsed nav { max-width: var(--bottom-bar-height); padding: 0; gap: 0; border-bottom-width: 0; }
   .sidebar.tab-bar-collapsed .nav-item:not(.active) { min-width: 0; max-width: 0; padding-inline: 0; opacity: 0; }
-  .sidebar.tab-bar-collapsed .nav-item.active { max-width: 64px; min-width: 0; gap: 0; padding: var(--space-20); }
+  .sidebar.tab-bar-collapsed .nav-item.active { max-width: var(--bottom-bar-height); min-width: 0; gap: 0; padding: var(--space-14); }
   .sidebar.tab-bar-collapsed .nav-item > :is(span, b) { max-height: 0; opacity: 0; }
   .sidebar.tab-bar-collapsed .nav-glass { opacity: 0; }
   /* Not painted at all while the bar is moving; it comes in, in place, once
@@ -2725,9 +2747,9 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
      lands over whatever is being read. It goes to the 12px gutter the cards
      and headers keep instead. Translating there, rather than dropping the auto
      margins, lets it travel on the same curve as the width instead of jumping
-     the moment the class lands: centred, the left edge sits at 50vw - 32px,
-     and the gutter is 12px. */
-  .sidebar.tab-bar-collapsed nav { translate: calc(44px - 50vw) 0; }
+     the moment the class lands: centred, the circle's middle sits at 50vw,
+     and in the gutter it sits half a circle in from it. */
+  .sidebar.tab-bar-collapsed nav { translate: calc(var(--page-inset) + var(--bottom-bar-height) / 2 - 50vw) 0; }
   /* The confirmation toast sat at 24px from the bottom, under the tab bar. */
   .toast { right: 12px; left: 12px; bottom: calc(var(--mobile-nav-height) + 8px + env(safe-area-inset-bottom)); }
   /* Tap targets from the accessibility pass. Each keeps the file's drawn size

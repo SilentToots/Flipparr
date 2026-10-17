@@ -469,7 +469,15 @@ Progress indicators, Gauges):
   column (Kindle's iPad bar) on the header's scroll edge turned over -- the
   sidebar's frost, faded in over 24px at its top and from the left -- so it
   reads over any cover passing under it; on a phone it takes the bottom edge and the tab bar rises above
-  it (owner, 2026-10-11). A tap opens it where it was
+  it (owner, 2026-10-11). It is `--bottom-bar-height` (52px) tall, the
+  folded tab bar's circle too; scrolling down folds the tab bar and the two
+  become one row, the circle at the left and the bar beside it, as Music's
+  mini player goes inline with iOS's minimized tab bar (owner, 2026-10-17).
+  In Flipparr View both sit as low as iOS's own tab bar: 12px into the home
+  indicator's inset, never under 12px from the edge (`--app-bar-bottom`).
+  The phone's tab bar is 58px (50px tabs) on the web and in the app alike.
+  Its cover sits 20px in from the bar's round end (owner, 2026-10-17: 12 read cramped).
+  A tap opens it where it was
   left. Not on Settings or over the reader; offline, only a comic on the
   device. The page keeps room under its last row for it.
 - **Downloads group by run** (the owner, 2026-10-11, after Kindle): a run

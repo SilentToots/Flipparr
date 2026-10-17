@@ -157,10 +157,15 @@
 
   /* The phone's tab bar (node 69:792): the violet at 88% over a blur, floating
      8px above the bottom edge. Its height is what every phone screen clears
-     at the bottom, so it is named once here. */
+     at the bottom, so it is named once here: the 58px bar, about iOS's own
+     floating tab bar (the owner, 2026-10-17), and the strip around it. */
   --mobile-nav-bg: rgb(126 34 206 / .88);
   --mobile-nav-blur: 4px;
-  --mobile-nav-height: 88px;
+  --mobile-nav-height: 74px;
+  /* The folded tab bar's circle and Flipparr View's continue bar are one
+     height, so when the tab bar folds the two share a row, as Music's mini
+     player moves in beside iOS's minimized tab bar. */
+  --bottom-bar-height: 52px;
   /* The desktop frame: the rail beside the page at full width and collapsed.
      Each is used by more than one rule -- the rail and the page's margin -- so
      it is named once. */
