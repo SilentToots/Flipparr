@@ -161,7 +161,14 @@
      floating tab bar (the owner, 2026-10-17), and the strip around it. */
   --mobile-nav-bg: rgb(126 34 206 / .88);
   --mobile-nav-blur: 4px;
-  --mobile-nav-height: 74px;
+  --mobile-nav-height: calc(74px + var(--home-lift));
+  /* Saved to the Home Screen, the web app has no Safari bar under it, but
+     without viewport-fit=cover iOS reports no home-indicator inset, so the
+     tab bar sat 8px off the screen's edge beside the indicator (the owner,
+     2026-10-17). It is lifted to 22px, where Flipparr View's and iOS's own
+     tab bars sit. Wherever iOS does report the inset the lift is 0, so the
+     two never add up. */
+  --home-lift: 0px;
   /* The folded tab bar's circle and Flipparr View's continue bar are one
      height, so when the tab bar folds the two share a row, as Music's mini
      player moves in beside iOS's minimized tab bar. */
@@ -478,6 +485,11 @@
 
 /* The same width as the stylesheet's phone rules. This was 620px, so between
    621 and 640px a control took its phone padding at its desktop height. */
+/* Either mode: iOS has reported a Home Screen app as fullscreen rather
+   than standalone (WebKit bug 264218). */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  :root { --home-lift: max(0px, var(--space-14) - env(safe-area-inset-bottom)); }
+}
 @media (max-width: 640px) {
   :root {
     --control-height-md: 44px;

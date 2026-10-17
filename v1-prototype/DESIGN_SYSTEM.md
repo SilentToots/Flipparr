@@ -171,7 +171,10 @@ background), `--wash-hover` and `--wash-active` (on dark chrome),
   not a pseudo-element's), so the frost continues up into the zone with no
   seam. The tab bar's strip stops 4px short of the bottom edge for the same
   reason in reverse: sampled there, its transparency became an opaque black
-  bar.
+  bar. Saved to the Home Screen there is no Safari bar, and with no
+  `viewport-fit=cover` iOS reports no home-indicator inset, so `--home-lift`
+  raises the tab bar to 22px from the edge there, where Flipparr View's sits
+  (owner, 2026-10-17).
   - `search="page"`: the Search page's own field, at 900px and below (above,
     the sidebar's field is search's). No other page has a field: on a phone
     every header carries a search button (`.appbar-search`, the bell's glass
