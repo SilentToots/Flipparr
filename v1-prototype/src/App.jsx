@@ -6600,7 +6600,8 @@ export function App() {
   // Pull to refresh, for the app on a Home Screen: installed, it has no
   // browser chrome and so none of Safari's reload. A Safari tab keeps its own.
   const pullPill = usePullToRefresh({
-    enabled: window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true,
+    // Either display mode: iOS has reported a Home Screen app as fullscreen (WebKit bug 264218).
+    enabled: window.matchMedia?.("(display-mode: standalone), (display-mode: fullscreen)").matches || window.navigator.standalone === true,
     onRefresh: () => { window.location.reload(); return new Promise(() => {}); },
   });
   // Resolve a ?series= link once the catalog is in. An id that no longer exists

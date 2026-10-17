@@ -675,12 +675,17 @@ Motion tokens:
   failed is not left. Opened from the reader's settings
   ("Fix panels on this page"); what is saved is the person's until they let
   it go, and the automatic tiers never touch it.
-- **The pull-to-refresh pill** (`.pull-refresh`, since 2026-09-22) is the
-  same capsule at the top of the page, under the phone's safe area, and only
-  in the installed app: a Home Screen web app has no browser chrome and so
-  none of Safari's reload, so a pull past 80px of the phone's own rubber
-  band shows "Release to refresh", and letting go there reloads. A Safari
-  tab keeps Safari's.
+- **Pull to refresh** (`.pull-refresh`, `usePullToRefresh`) is iOS's refresh
+  control, not a pill of words (owner, 2026-10-17): a spinner in a 40px glass
+  circle, centred in the gap the pull opens under the header, its eight
+  marks appearing one by one as the pull deepens and all there past 80px of
+  the rubber band. Letting go there refreshes; it spins, held just under the
+  header, until that is done. Flipparr View taps the phone's haptic as the
+  pull passes 80px. What happens is said to a screen reader, not shown. Only
+  where there is no browser reload: a Home Screen web app and the app. A
+  Safari tab keeps Safari's. What the pull reveals is the page's black: the
+  app's native view is black and the app is dark (`UIUserInterfaceStyle`),
+  where it had shown iOS's light-mode white.
 - **Sheets on a phone.** A dialog is a sheet from the bottom, 8px in from
   the screen's edges with 24px corners, over the tab bar, with a grabber
   (`SheetGrabber`). It slides up as it opens. On a sheet with nothing to

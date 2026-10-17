@@ -2265,18 +2265,35 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .structure-runs span { color: var(--muted-strong); font-size: var(--text-sm); }
 .structure-runs em { padding: var(--space-8); color: var(--muted); font-size: var(--text-xs); font-style: normal; }
 .add-structure-group { width: fit-content; }
-/* The pull-to-refresh pill of an installed app: at the top, under the
-   phone's safe area, in the glass the navigation layer uses. */
+/* Pull to refresh (src/frame/pullRefresh.jsx), after iOS's refresh control
+   (the owner, 2026-10-17): a spinner in a small glass circle, centred in the
+   gap the pull opens under the header, its eight marks appearing one by one
+   as the pull deepens and all there once letting go would refresh. Then it
+   spins, held just under the header while the page settles back, until the
+   refresh is done. --pull (px) and --pull-progress (0-1) come from the
+   finger. No words: what happens is said to a screen reader instead. */
 .pull-refresh {
-  position: fixed; z-index: 100; top: calc(var(--space-12) + env(safe-area-inset-top)); left: 50%; translate: -50% 0;
-  display: flex; align-items: center; gap: var(--space-8); height: var(--control-height-sm); padding: 0 var(--space-14);
-  border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-bg);
-  color: var(--text); font-size: var(--text-sm); font-weight: var(--weight-semibold); white-space: nowrap;
-  animation: pull-refresh-in var(--motion-duration-fast) var(--motion-ease-standard) backwards;
+  --pull: 0px; --pull-progress: 0;
+  position: fixed; z-index: 100; left: 50%; translate: -50% 0;
+  top: calc(var(--page-header-height, calc(env(safe-area-inset-top) + var(--space-48))) + max(var(--space-8), (var(--pull) - var(--space-40)) / 2));
+  width: var(--space-40); height: var(--space-40); display: grid; place-items: center;
+  border: 1px solid var(--glass-border); border-radius: 50%; background: var(--glass-bg);
+  color: var(--muted-strong); pointer-events: none;
+  opacity: min(1, calc(var(--pull-progress) * 3));
 }
-@keyframes pull-refresh-in { from { opacity: 0; translate: -50% -8px; } to { opacity: 1; translate: -50% 0; } }
-/* Idle, the live region stays in the document (announcers follow its text) and out of the way. */
-.pull-refresh.idle { visibility: hidden; animation: none; pointer-events: none; }
+.pull-refresh .loading-indicator__mark:nth-child(1) { --mark: 0; }
+.pull-refresh .loading-indicator__mark:nth-child(2) { --mark: 1; }
+.pull-refresh .loading-indicator__mark:nth-child(3) { --mark: 2; }
+.pull-refresh .loading-indicator__mark:nth-child(4) { --mark: 3; }
+.pull-refresh .loading-indicator__mark:nth-child(5) { --mark: 4; }
+.pull-refresh .loading-indicator__mark:nth-child(6) { --mark: 5; }
+.pull-refresh .loading-indicator__mark:nth-child(7) { --mark: 6; }
+.pull-refresh .loading-indicator__mark:nth-child(8) { --mark: 7; }
+.pull-refresh:not(.pull-refresh--refreshing) .loading-indicator__mark { animation: none; opacity: clamp(0, calc(var(--pull-progress) * 8 - var(--mark)), 1); }
+.pull-refresh--armed { color: var(--text); }
+.pull-refresh--refreshing { opacity: 1; top: calc(var(--page-header-height, calc(env(safe-area-inset-top) + var(--space-48))) + var(--space-8)); transition: top var(--motion-duration-standard) var(--motion-ease-standard); }
+/* Idle it is out of the way; the screen reader's region beside it stays. */
+.pull-refresh--idle { visibility: hidden; }
 .toast { position: fixed; z-index: 100; right: 24px; bottom: 24px; min-height: 48px; padding: 0 var(--space-16); border: 1px solid var(--green-border); border-radius: var(--radius-4); background: var(--surface-raised); color: var(--green-text); display: flex; align-items: center; gap: var(--space-8); box-shadow: 0 18px 50px var(--shadow-soft); }
 
 @media (max-width: 1100px) {

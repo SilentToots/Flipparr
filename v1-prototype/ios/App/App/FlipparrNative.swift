@@ -55,6 +55,7 @@ public class FlipparrNativePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "transfers", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "unpack", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setEdgeBack", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "tap", returnType: CAPPluginReturnPromise),
     ]
 
     private func inside(_ relative: String) throws -> URL { try flipparrPath(relative) }
@@ -257,6 +258,13 @@ extension FlipparrNativePlugin {
     /// sheet the page can close is in front, off otherwise -- the reader's
     /// left edge is its previous-page zone, and the library has nothing to go
     /// back from (src/reader-app/edge-back.js).
+    /// A light haptic tap: pull to refresh's, as the pull passes the point
+    /// of refreshing (src/frame/pullRefresh.jsx), as iOS's own control does.
+    @objc func tap(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        call.resolve()
+    }
+
     @objc func setEdgeBack(_ call: CAPPluginCall) {
         let enabled = call.getBool("enabled") ?? false
         DispatchQueue.main.async { EdgeBack.enabled = enabled }
@@ -608,6 +616,11 @@ class FlipparrViewController: CAPBridgeViewController, UIGestureRecognizerDelega
         // owner, 2026-10-11). Always, so a short page can be pulled too.
         webView?.scrollView.bounces = true
         webView?.scrollView.alwaysBounceVertical = true
+        // What a pull past the top shows: the page's black, not the system's
+        // light-mode white behind a see-through web view (the owner,
+        // 2026-10-17). capacitor.config.json's backgroundColor colours the
+        // web view; this is the view behind it.
+        view.backgroundColor = .black
     }
 
     /// Only while the page says a closable layer is in front.

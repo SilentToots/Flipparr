@@ -22,6 +22,7 @@ import { CoverStatus } from "../components/CoverStatus.jsx";
 import { ReadState } from "../components/ReadState.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
 import { CardMenu } from "../library/cards.jsx";
+import { tapHaptic } from "./haptics.js";
 import { ContinueBar } from "./ContinueBar.jsx";
 import { DownloadsDrawer } from "./DownloadsDrawer.jsx";
 import { LibraryMatches, RecentSearches, useLibraryMatches } from "../search/library-search.jsx";
@@ -557,7 +558,7 @@ function Library({ client, status, online, transport, onSwitch, onSwitchTo, onSi
       setRefreshing(false);
     }
   }, [transport, loadCatalog, noteReadingChanged, downloads]);
-  const pullPill = usePullToRefresh({ enabled: true, onRefresh: refreshLibrary });
+  const pullPill = usePullToRefresh({ enabled: true, onRefresh: refreshLibrary, onArm: tapHaptic });
   // Back in the foreground: the library and the story arcs as the server has
   // them now -- what it downloaded, and collections and arcs made on the
   // web, while the app sat suspended -- at most once a minute. Where comics
