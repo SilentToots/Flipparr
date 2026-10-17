@@ -469,8 +469,8 @@ Progress indicators, Gauges):
   column (Kindle's iPad bar) on the header's scroll edge turned over -- the
   sidebar's frost, faded in over 24px at its top and from the left -- so it
   reads over any cover passing under it; on a phone it takes the bottom edge and the tab bar rises above
-  it (owner, 2026-10-11). It is `--bottom-bar-height` (52px) tall, the
-  folded tab bar's circle too; scrolling down folds the tab bar and the two
+  it (owner, 2026-10-11). On a phone it is `--bottom-bar-height` (52px)
+  tall, the folded tab bar's circle too (an iPad's stays 64px); scrolling down folds the tab bar and the two
   become one row, the circle at the left and the bar beside it, as Music's
   mini player goes inline with iOS's minimized tab bar (owner, 2026-10-17).
   In Flipparr View both sit as low as iOS's own tab bar: 12px into the home

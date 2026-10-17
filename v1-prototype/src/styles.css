@@ -1851,16 +1851,16 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
 }
-.continue-bar-button { width: 100%; min-height: var(--bottom-bar-height); display: flex; align-items: center; gap: var(--space-12); padding: var(--space-6) var(--space-24) var(--space-6) var(--space-20); overflow: hidden; border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; pointer-events: auto; }
+.continue-bar-button { width: 100%; min-height: var(--space-64); display: flex; align-items: center; gap: var(--space-12); padding: var(--space-6) var(--space-24) var(--space-6) var(--space-20); overflow: hidden; border: 1px solid var(--glass-border); border-radius: var(--radius-pill); background: var(--glass-solid); box-shadow: var(--glass-rim), var(--glass-shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; pointer-events: auto; }
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .continue-bar-button { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
 }
-.continue-bar-cover { flex: none; width: var(--space-28); height: var(--space-40); border-radius: var(--radius-4); }
+.continue-bar-cover { flex: none; width: var(--space-32); height: var(--space-48); border-radius: var(--radius-4); }
 .continue-bar-text { flex: 1; min-width: 0; display: grid; gap: var(--space-2); }
 .continue-bar-text strong { overflow: hidden; font-size: var(--text-md); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .continue-bar-text small { color: var(--muted); font-size: var(--text-sm); }
 .continue-bar-icon { flex: none; color: var(--violet-text); }
-.reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-24) + var(--bottom-bar-height) + var(--space-32) + env(safe-area-inset-bottom)); }
+.reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-24) + var(--space-64) + var(--space-32) + env(safe-area-inset-bottom)); }
 @media (min-width: 641px) and (max-width: 900px) { .continue-bar { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); } }
 /* On a phone the bar takes the bottom edge and the tab bar rises above it,
    8 px apart (the owner, 2026-10-11); a toast rises with them. Both sit as
@@ -1874,6 +1874,10 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
   .reader-app .toast { bottom: calc(var(--mobile-nav-height) + var(--app-bar-bottom)); }
   .reader-app .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + var(--app-bar-bottom)); }
   .continue-bar { left: 0; padding-bottom: var(--app-bar-bottom); transition: padding-left var(--motion-duration-morph) var(--motion-ease-morph); }
+  /* Slimmer than the iPad's 64px bar, which keeps its size (the owner,
+     2026-10-17): the phone's is the folded tab bar's height, for the row. */
+  .continue-bar-button { min-height: var(--bottom-bar-height); }
+  .continue-bar-cover { width: var(--space-28); height: var(--space-40); }
   .continue-bar::before {
     -webkit-mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent);
     mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent);
