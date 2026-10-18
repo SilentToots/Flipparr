@@ -4182,6 +4182,10 @@ button.glass-select--compact { min-width: 0; min-height: 32px; padding: 0 var(--
 .reader-page.shown { visibility: visible; }
 /* A spread is read across the width rather than squeezed into the height. */
 .reader-page.spread.shown { max-width: 100%; max-height: none; width: 100%; }
+/* In panel view a spread fits whole, as any page does: a whole-page step is
+   the whole spread, not its middle across a phone held sideways (the owner,
+   2026-10-18); its panels are zoomed to from there (fittedSize, whole). */
+.reader-page.spread.shown.panel-view { max-height: 100%; width: auto; }
 .reader-status { display: flex; align-items: center; gap: var(--space-12); color: var(--muted); font-size: var(--text-sm); }
 .reader-status--error { color: var(--red-text); }
 /* A page whose image did not load: its broken image hidden, the reason and a

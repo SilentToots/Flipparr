@@ -717,7 +717,7 @@ export function ReaderView({
     const surface = surfaceRef.current;
     if (!image || !surface || !image.naturalWidth) return null;
     const viewport = surface.getBoundingClientRect();
-    const base = fittedSize({ width: image.naturalWidth, height: image.naturalHeight }, viewport);
+    const base = fittedSize({ width: image.naturalWidth, height: image.naturalHeight }, viewport, { whole: true });
     baseRef.current = base;
     framedFor.current = `${Math.round(viewport.width)}x${Math.round(viewport.height)}`;
     const rects = pagePanels(number);
@@ -783,8 +783,9 @@ export function ReaderView({
       if (first) return;
       if (zoomRef.current > 1) {
         // The same fit the page is laid out with (a spread fits by width
-        // alone), or the pan is clamped against a size the page is not.
-        baseRef.current = fittedSize({ width: image.naturalWidth, height: image.naturalHeight }, box);
+        // alone, whole in panel view), or the pan is clamped against a size
+        // the page is not.
+        baseRef.current = fittedSize({ width: image.naturalWidth, height: image.naturalHeight }, box, { whole: panelModeRef.current });
         setPan((current) => clampPan(current, zoomRef.current, box, baseRef.current));
         // The size is inline from `baseRef`, which is not state; a render is
         // owed so the page takes its new 1x size.

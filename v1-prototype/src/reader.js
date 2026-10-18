@@ -112,11 +112,15 @@ export function pinchPan(pan, midFrom, midTo) {
  * The page's laid-out size at 1x, as the stylesheet fits it: by width and
  * height both, or -- a spread -- by width alone (`.reader-page.spread`
  * reads across the width). Framing a spread by height put every panel on
- * it off by the difference.
+ * it off by the difference. In panel view a spread fits whole like any page
+ * (`whole`): a step that shows the whole page -- one with no panels, the
+ * page before or after them, a double-tap's look -- is 1x, and a spread
+ * fitted by width ran off the top and bottom of a phone held sideways (the
+ * owner, 2026-10-18). Its panels are zoomed to from there.
  */
-export function fittedSize(natural, viewport) {
+export function fittedSize(natural, viewport, { whole = false } = {}) {
   if (!natural.width || !natural.height) return { width: 0, height: 0 };
-  const fit = isSpread(natural.width, natural.height)
+  const fit = isSpread(natural.width, natural.height) && !whole
     ? viewport.width / natural.width
     : Math.min(1, viewport.width / natural.width, viewport.height / natural.height);
   return { width: natural.width * fit, height: natural.height * fit };

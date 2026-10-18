@@ -351,3 +351,17 @@ test("a page is framed at the size the stylesheet lays it out", () => {
   assert.equal(spread.height, 300, "and is as tall as that makes it, not fitted by height");
   assert.deepEqual(fittedSize({ width: 0, height: 0 }, viewport), { width: 0, height: 0 });
 });
+
+test("in panel view a spread fits whole, so a whole-page step shows all of it in landscape", () => {
+  const landscape = { width: 874, height: 402 };
+  const spread = { width: 2600, height: 2000 };
+  const byWidth = fittedSize(spread, landscape);
+  assert.ok(byWidth.height > landscape.height, "read across the width, a spread runs off a phone held sideways");
+  const whole = fittedSize(spread, landscape, { whole: true });
+  assert.ok(Math.abs(whole.height - 402) < 0.01, "in panel view it fits by height there");
+  assert.ok(whole.width <= landscape.width);
+  assert.deepEqual(fittedSize(spread, { width: 390, height: 844 }, { whole: true }), fittedSize(spread, { width: 390, height: 844 }),
+    "on a phone held upright it is the same fit as before");
+  assert.deepEqual(fittedSize({ width: 1300, height: 2000 }, landscape, { whole: true }), fittedSize({ width: 1300, height: 2000 }, landscape),
+    "a single page is unchanged");
+});
