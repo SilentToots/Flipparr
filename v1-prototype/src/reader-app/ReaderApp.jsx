@@ -23,7 +23,7 @@ import { ReadState } from "../components/ReadState.jsx";
 import { StorageGauge } from "../components/StorageGauge.jsx";
 import { CardMenu } from "../library/cards.jsx";
 import { tapHaptic } from "./haptics.js";
-import { ContinueBar } from "./ContinueBar.jsx";
+import { ContinueBar } from "../frame/ContinueBar.jsx";
 import { DownloadsDrawer } from "./DownloadsDrawer.jsx";
 import { LibraryMatches, RecentSearches, useLibraryMatches } from "../search/library-search.jsx";
 import { libraryMatchState } from "../discover.js";

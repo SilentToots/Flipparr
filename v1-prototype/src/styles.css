@@ -1862,38 +1862,55 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
 .continue-bar-icon { flex: none; color: var(--violet-text); }
 .reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-24) + var(--space-64) + var(--space-32) + env(safe-area-inset-bottom)); }
 @media (min-width: 641px) and (max-width: 900px) { .continue-bar { left: calc(var(--sidebar-inset) + var(--sidebar-width-collapsed)); } }
-/* On a phone the bar takes the bottom edge and the tab bar rises above it,
-   8 px apart (the owner, 2026-10-11); a toast rises with them. Both sit as
-   low as iOS's own floating tab bar, 12px above the home indicator's 34px
-   rather than above all of it (the owner, 2026-10-17: the two took a fifth
-   of an iPhone's screen) -- never closer than 12px to the edge. Flipparr
-   View only: the web keeps its strip 4px off the edge for Safari's bar. */
+/* The web shows the bar on a phone only: above that it has a sidebar and
+   shelves of its own. Flipparr View shows it at every size. */
+@media (min-width: 641px) { .continue-bar--phone-only { display: none; } }
+/* On a phone the bar sits above the tab bar, 12px apart, as Music's player
+   sits above its tab bar (the owner, 2026-10-18; it was under the tab bar,
+   2026-10-11), a little shorter than the tab bar; a toast rises with them.
+   --tab-bar-bottom is where the tab bar's bottom edge is: on the web its
+   strip stays 4px off the edge for Safari's bar (and the continue bar too,
+   for the same reason); in Flipparr View both sit as low as iOS's own tab
+   bar, 12px into the home indicator's 34px and never closer than 12px to
+   the edge (the owner, 2026-10-17). */
 @media (max-width: 640px) {
-  .reader-app { --app-bar-bottom: max(var(--space-12), calc(env(safe-area-inset-bottom) - var(--space-12))); }
+  :root { --tab-bar-bottom: calc(var(--space-8) + env(safe-area-inset-bottom) + var(--home-lift)); }
+  .reader-app {
+    --app-bar-bottom: max(var(--space-12), calc(env(safe-area-inset-bottom) - var(--space-12)));
+    --tab-bar-bottom: var(--app-bar-bottom);
+  }
   .reader-app .sidebar { padding-bottom: calc(var(--app-bar-bottom) - var(--space-4)); }
   .reader-app .toast { bottom: calc(var(--mobile-nav-height) + var(--app-bar-bottom)); }
   .reader-app .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + var(--app-bar-bottom)); }
-  .continue-bar { left: 0; padding-bottom: var(--app-bar-bottom); transition: padding-left var(--motion-duration-morph) var(--motion-ease-morph); }
+  .continue-bar {
+    left: 0; bottom: var(--space-4);
+    padding-bottom: calc(var(--tab-bar-bottom) - var(--space-4) + var(--tab-bar-height) + var(--space-12));
+    transition: padding-left var(--motion-duration-morph) var(--motion-ease-morph), padding-bottom var(--motion-duration-morph) var(--motion-ease-morph);
+  }
   /* Slimmer than the iPad's 64px bar, which keeps its size (the owner,
-     2026-10-17): the phone's is the folded tab bar's height, for the row. */
-  .continue-bar-button { min-height: var(--bottom-bar-height); }
-  .continue-bar-cover { width: var(--space-28); height: var(--space-40); }
+     2026-10-17): the phone's is the folded tab bar's height, for the row,
+     with a smaller cover and the two lines set tight. */
+  .continue-bar-button { min-height: var(--bottom-bar-height); padding-block: var(--space-4); }
+  .continue-bar-cover { width: calc(var(--space-32) * 2 / 3); height: var(--space-32); }
+  .continue-bar-text { line-height: var(--leading-tight); }
   .continue-bar::before {
     -webkit-mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent);
     mask-image: linear-gradient(to top, #000 calc(100% - var(--space-24)), transparent);
   }
-  .reader-app:has(.continue-bar) .sidebar { bottom: calc(var(--space-4) + var(--bottom-bar-height) + var(--space-8)); }
-  .reader-app:has(.continue-bar) .toast { bottom: calc(var(--mobile-nav-height) + var(--app-bar-bottom) + var(--bottom-bar-height) + var(--space-8)); }
-  .reader-app:has(.continue-bar) .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + var(--app-bar-bottom) + var(--bottom-bar-height) + var(--space-8)); }
+  body:has(.continue-bar) .toast { bottom: calc(var(--tab-bar-bottom) + var(--tab-bar-height) + var(--space-12) + var(--bottom-bar-height) + var(--space-8)); }
+  body:has(.continue-bar) .main-content { padding-bottom: calc(var(--tab-bar-bottom) + var(--tab-bar-height) + var(--space-12) + var(--bottom-bar-height) + var(--space-20)); }
+  body:has(.continue-bar) .alpha-rail { height: calc(100dvh - var(--page-header-height, 0px) - var(--mobile-nav-height) - env(safe-area-inset-bottom) - var(--space-16) - var(--bottom-bar-height) - var(--space-12)); }
   /* Scrolling down folds the tab bar into its circle, and the two bars
-     become one row: the circle drops to the bar's height at the left and the
-     bar makes room beside it, as Music's mini player moves inline with iOS's
-     minimized tab bar (Apple's HIG, Tab bars). Scrolling up, the top of the
-     page or a tap on the circle puts them back. The circle travels on the
-     tab bar's own curve, so the two move as one; reduced motion makes both
-     instant. */
-  .reader-app:has(.continue-bar) .sidebar.tab-bar-collapsed nav { translate: calc(var(--page-inset) + var(--bottom-bar-height) / 2 - 50vw) calc(var(--bottom-bar-height) + var(--space-8)); }
-  .reader-app:has(.sidebar.tab-bar-collapsed) .continue-bar { padding-left: calc(var(--page-inset) + var(--bottom-bar-height) + var(--space-8)); }
+     become one row: the bar drops to the tab bar's row and makes room
+     beside the circle at the left, as Music's mini player moves inline
+     with iOS's minimized tab bar (Apple's HIG, Tab bars). Scrolling up,
+     the top of the page or a tap on the circle puts them back. The bar
+     moves on the tab bar's own curve, so the two move as one; reduced
+     motion makes both instant. */
+  body:has(.sidebar.tab-bar-collapsed) .continue-bar {
+    padding-bottom: calc(var(--tab-bar-bottom) - var(--space-4));
+    padding-left: calc(var(--page-inset) + var(--bottom-bar-height) + var(--space-8));
+  }
 }
 /* A hold opens the card's menu, not iOS's own image callout or a text selection. */
 .reader-app :is(.series-card, .issue-tile, .pull-card) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
@@ -2736,7 +2753,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
   .sidebar .nav-item.active { height: auto; background: transparent; }
   .sidebar .nav-item.active::before { display: none; }
 
-  /* Scrolling down tucks the bar into a 52px circle holding the current tab
+  /* Scrolling down tucks the bar into a 48px circle holding the current tab
      (.tab-bar-collapsed, from useCollapsingTabBar); scrolling up, the top of
      the page or a tap opens it again. The other tabs and the labels ease out
      rather than vanish. The glass's iOS curve was tried here first; it does
@@ -2758,7 +2775,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
      circle drops the border instead. */
   .sidebar.tab-bar-collapsed nav { max-width: var(--bottom-bar-height); padding: 0; gap: 0; border-bottom-width: 0; }
   .sidebar.tab-bar-collapsed .nav-item:not(.active) { min-width: 0; max-width: 0; padding-inline: 0; opacity: 0; }
-  .sidebar.tab-bar-collapsed .nav-item.active { max-width: var(--bottom-bar-height); min-width: 0; gap: 0; padding: var(--space-14); }
+  .sidebar.tab-bar-collapsed .nav-item.active { max-width: var(--bottom-bar-height); min-width: 0; gap: 0; padding: var(--space-12); }
   .sidebar.tab-bar-collapsed .nav-item > :is(span, b) { max-height: 0; opacity: 0; }
   .sidebar.tab-bar-collapsed .nav-glass { opacity: 0; }
   /* Not painted at all while the bar is moving; it comes in, in place, once

@@ -471,13 +471,17 @@ Progress indicators, Gauges):
   cover, page and percentage, in a glass pill the width of the page's
   column (Kindle's iPad bar) on the header's scroll edge turned over -- the
   sidebar's frost, faded in over 24px at its top and from the left -- so it
-  reads over any cover passing under it; on a phone it takes the bottom edge and the tab bar rises above
-  it (owner, 2026-10-11). On a phone it is `--bottom-bar-height` (52px)
-  tall, the folded tab bar's circle too (an iPad's stays 64px); scrolling down folds the tab bar and the two
-  become one row, the circle at the left and the bar beside it, as Music's
-  mini player goes inline with iOS's minimized tab bar (owner, 2026-10-17).
-  In Flipparr View both sit as low as iOS's own tab bar: 12px into the home
-  indicator's inset, never under 12px from the edge (`--app-bar-bottom`).
+  reads over any cover passing under it. On a phone -- in Flipparr View and
+  on the web, which shows it on phones only -- it sits 12px above the tab bar,
+  as Music's player sits above its tab bar (owner, 2026-10-18; it was under
+  the tab bar from 2026-10-11), `--bottom-bar-height` (48px) tall, a little
+  under the tab bar's 58px, with a 32px cover; an iPad's stays 64px.
+  Scrolling down folds the tab bar into a circle of the same height and the
+  bar drops into its row beside it, as Music's mini player goes inline with
+  iOS's minimized tab bar (owner, 2026-10-17). `--tab-bar-bottom` is where
+  the tab bar's bottom edge is: on the web 8px off the edge (Safari's bar),
+  in Flipparr View as low as iOS's own tab bar, 12px into the home
+  indicator's inset and never under 12px from the edge (`--app-bar-bottom`).
   The phone's tab bar is 58px (50px tabs) on the web and in the app alike.
   Its cover sits 20px in from the bar's round end (owner, 2026-10-17: 12 read cramped).
   A tap opens it where it was

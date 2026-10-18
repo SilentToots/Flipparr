@@ -161,7 +161,8 @@
      floating tab bar (the owner, 2026-10-17), and the strip around it. */
   --mobile-nav-bg: rgb(126 34 206 / .88);
   --mobile-nav-blur: 4px;
-  --mobile-nav-height: calc(74px + var(--home-lift));
+  --tab-bar-height: 58px;
+  --mobile-nav-height: calc(var(--tab-bar-height) + var(--space-16) + var(--home-lift));
   /* Saved to the Home Screen, the web app has no Safari bar under it, but
      without viewport-fit=cover iOS reports no home-indicator inset, so the
      tab bar sat 8px off the screen's edge beside the indicator (the owner,
@@ -169,10 +170,11 @@
      tab bars sit. Wherever iOS does report the inset the lift is 0, so the
      two never add up. */
   --home-lift: 0px;
-  /* The folded tab bar's circle and Flipparr View's continue bar are one
-     height, so when the tab bar folds the two share a row, as Music's mini
-     player moves in beside iOS's minimized tab bar. */
-  --bottom-bar-height: 52px;
+  /* The folded tab bar's circle and a phone's continue bar are one height,
+     so when the tab bar folds the two share a row, as Music's mini player
+     moves in beside iOS's minimized tab bar. A little under the tab bar,
+     as Music's player is under its tab bar (the owner, 2026-10-18). */
+  --bottom-bar-height: 48px;
   /* The desktop frame: the rail beside the page at full width and collapsed.
      Each is used by more than one rule -- the rail and the page's margin -- so
      it is named once. */
