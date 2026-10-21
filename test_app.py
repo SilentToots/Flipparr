@@ -1829,8 +1829,43 @@ class FilenameParserTests(unittest.TestCase):
         ):
             found = app.discover_comic_vine_series("Synthetic", "key")["results"]
         self.assertEqual(found[0]["description"], row["description"])
-        fields = urllib.parse.parse_qs(urllib.parse.urlsplit(fetch.call_args.args[1]).query)["field_list"][0].split(",")
+        fields = urllib.parse.parse_qs(urllib.parse.urlsplit(fetch.call_args_list[0].args[1]).query)["field_list"][0].split(",")
         self.assertIn("description", fields)
+
+    def test_comic_vine_discovery_takes_covers_from_volumes_not_the_blank_placeholder(self):
+        blank = {"medium_url": "https://comicvine.gamespot.com/a/uploads/scale_medium/11122/111222211/6373148-blank.png",
+                 "small_url": "https://comicvine.gamespot.com/a/uploads/scale_small/11122/111222211/6373148-blank.png"}
+        search = {"status_code": 1, "results": [
+            {"id": 796, "name": "Batman", "start_year": "1940", "image": blank},
+            {"id": 77146, "name": "Batman", "start_year": "1987", "image": blank},
+        ]}
+        volumes = {"status_code": 1, "results": [
+            {"id": 796, "image": {"medium_url": "https://comicvine.gamespot.com/a/uploads/scale_medium/10/103530/3421824-2.png"}},
+            {"id": 77146, "image": blank},
+        ]}
+        with patch("app.fetch_provider_json", side_effect=[search, volumes]) as fetch, \
+             patch("app.preferred_language", return_value="en"):
+            found = {row["providerSeriesId"]: row["cover"]
+                     for row in app.discover_comic_vine_series("Batman", "key", {"keys": set()})["results"]}
+        self.assertEqual(found["796"], "https://comicvine.gamespot.com/a/uploads/scale_medium/10/103530/3421824-2.png")
+        self.assertIsNone(found["77146"], "Comic Vine's no-image picture is no cover")
+        asked = urllib.parse.parse_qs(urllib.parse.urlsplit(fetch.call_args_list[1].args[1]).query)
+        self.assertEqual(set(asked["filter"][0].removeprefix("id:").split("|")), {"796", "77146"})
+        self.assertEqual(fetch.call_count, 2, "one /volumes/ request for the whole page")
+
+    def test_comic_vine_discovery_keeps_its_results_when_the_cover_request_fails(self):
+        search = {"status_code": 1, "results": [{"id": 88, "name": "Synthetic", "start_year": "2020"}]}
+        with patch("app.fetch_provider_json", side_effect=[search, OSError("down")]), \
+             patch("app.preferred_language", return_value="en"):
+            found = app.discover_comic_vine_series("Synthetic", "key", {"keys": set()})["results"]
+        self.assertEqual([(row["title"], row["cover"]) for row in found], [("Synthetic", None)])
+
+    def test_comic_vine_cover_refuses_only_the_no_image_picture(self):
+        self.assertIsNone(app._comic_vine_cover({"medium_url": "https://x/a/uploads/scale_medium/1/2/6373148-blank.png"}))
+        self.assertEqual(app._comic_vine_cover({"medium_url": "https://x/a/uploads/scale_medium/1/2/blank-slate-01.jpg"}),
+                         "https://x/a/uploads/scale_medium/1/2/blank-slate-01.jpg")
+        self.assertEqual(app._comic_vine_cover({"medium_url": "", "small_url": "https://x/s.jpg"}), "https://x/s.jpg")
+        self.assertIsNone(app._comic_vine_cover(None))
 
     def test_comic_vine_returns_named_issue_metadata(self):
         context = {"title": "Absolute Batman", "year": 2024}

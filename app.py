@@ -12869,6 +12869,50 @@ def discover_metron_series(
     }
 
 
+# Comic Vine's picture for "no image": a grey "Blank!" starburst, served at
+# every size under one upload (…/6373148-blank.png). Its search endpoint now
+# answers it for every volume, Batman 1940 included, while /volumes/ still
+# carries the real covers (checked 2026-10-21) -- so it is no cover at all,
+# never a cover to show or to fill another provider's card with.
+_COMIC_VINE_NO_IMAGE = re.compile(r"/\d+-blank\.(?:png|jpe?g|gif|webp)$", re.IGNORECASE)
+
+
+def _comic_vine_cover(image: Any) -> str | None:
+    """A Comic Vine image's cover URL, or None for its no-image stand-in."""
+    if not isinstance(image, dict):
+        return None
+    for size in ("medium_url", "small_url", "original_url"):
+        url = str(image.get(size) or "")
+        if url and not _COMIC_VINE_NO_IMAGE.search(urllib.parse.urlsplit(url).path):
+            return url
+    return None
+
+
+def _comic_vine_volume_covers(volume_ids: list[str], api_key: str) -> dict[str, str]:
+    """Real covers for Comic Vine volumes, by id, in one /volumes/ request.
+
+    One request for a page of search results (up to 100 ids, filtered as
+    `id:a|b|c`) is Comic Vine's own pagination limit and one more of its 200
+    hourly requests per resource, paced by fetch_provider_json like the rest.
+    """
+    ids = [str(volume_id) for volume_id in volume_ids if str(volume_id or "").isdigit()][:100]
+    if not ids:
+        return {}
+    url = f"{COMIC_VINE_API_BASE}/volumes/?" + urllib.parse.urlencode({
+        "api_key": api_key, "format": "json", "filter": "id:" + "|".join(ids),
+        "limit": 100, "field_list": "id,image",
+    })
+    payload = fetch_provider_json("comic_vine", url, api_key)
+    if str(payload.get("status_code")) != "1":
+        return {}
+    covers = {}
+    for row in payload.get("results") or []:
+        cover = _comic_vine_cover(row.get("image"))
+        if cover and row.get("id"):
+            covers[str(row["id"])] = cover
+    return covers
+
+
 def _comic_vine_volume_row(
     row: dict[str, Any], library_keys: set[tuple[str, str]], english_only: bool,
 ) -> dict[str, Any] | None:
@@ -12881,14 +12925,13 @@ def _comic_vine_volume_row(
     edition = manga_edition(publisher)
     if edition == "foreign" and english_only:
         return None
-    image = row.get("image") or {}
     return {
         "provider": "comic_vine", "providerName": "Comic Vine",
         "providerSeriesId": str(row["id"]), "title": title,
         "yearBegan": year, "yearEnded": None, "yearLabel": str(year or "Unknown"),
         "publisher": publisher, "issueCount": int(row.get("count_of_issues") or 0),
         "medium": "manga" if edition == "manga" else "comic",
-        "cover": image.get("medium_url") or image.get("small_url"),
+        "cover": _comic_vine_cover(row.get("image")),
         "url": row.get("site_detail_url"),
         "description": row.get("description"),
         "inLibrary": (normalized_title(title), str(year or "")) in library_keys,
@@ -12925,9 +12968,22 @@ def discover_comic_vine_series(
         -difflib.SequenceMatcher(None, normalized_title(item["title"]), normalized_title(title_query)).ratio(),
         -(item.get("yearBegan") or 0), item["title"],
     ))
+    page = results[:24]
+    # The search answers Comic Vine's no-image picture for every volume; the
+    # covers come from one /volumes/ request for the page instead. A cover is
+    # a nicety: if that request fails the cards show Flipparr's own blank.
+    missing = [item["providerSeriesId"] for item in page if not item.get("cover")]
+    if missing:
+        try:
+            covers = _comic_vine_volume_covers(missing, api_key)
+        except Exception as exc:
+            log_event("comic_vine_covers_failed", level="warning", error=shown(exc))
+            covers = {}
+        for item in page:
+            item["cover"] = item.get("cover") or covers.get(item["providerSeriesId"])
     return {
         "query": cleaned, "titleQuery": title_query, "yearHint": year_hint,
-        "provider": "Comic Vine", "providerId": "comic_vine", "results": results[:24],
+        "provider": "Comic Vine", "providerId": "comic_vine", "results": page,
     }
 
 
@@ -14483,7 +14539,7 @@ def _comic_vine_issue_entries(
             "provider_evidence": evidence,
             "publication_date": publication_date,
             "publication_year": _provider_year(publication_date, issue.get("cover_date")),
-            "cover": image.get("medium_url") or image.get("small_url") or image.get("original_url"),
+            "cover": _comic_vine_cover(image),
         })
     if not entries:
         raise ValueError("Comic Vine returned no issues for the matched volume")
