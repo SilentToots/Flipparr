@@ -13213,6 +13213,10 @@ def _discover_series_with(
         finally:
             people_pool.shutdown(wait=False)
         results = _rank_discovered(results, people, title_query, year_hint)
+    # Only when Metron's own search answered: down, it would hold the search
+    # up for another timeout to say the same thing.
+    if metron.get("enabled") and metron.get("token") and "metron" in by_provider:
+        _fill_covers_from_metron(results[:48], title_query, str(metron["token"]))
     if not results and len(errors) == len(searches):
         raise RuntimeError(
             errors[0]["error"] if len(errors) == 1
@@ -13244,6 +13248,49 @@ def _discover_series_with(
     if errors:
         result["fallbacks"] = errors
     return result
+
+
+def _metron_first_issue_covers(title: str, token: str) -> dict[str, dict[str, Any]]:
+    """Issue #1's cover of each Metron series named like `title`, by series id.
+
+    Metron's series list carries no image, but its issues do, on Metron's own
+    servers: one /issue/ request for every matching series' #1 covers a page
+    of search cards. It is the fallback for a run no catalog gave a cover --
+    a Metron-only run, or every run while Comic Vine is down (the owner,
+    2026-10-21) -- one more request at Metron's pace, only when needed.
+    """
+    url = f"{METRON_API_BASE}/issue/?" + urllib.parse.urlencode({"series_name": title, "number": "1"})
+    found: dict[str, dict[str, Any]] = {}
+    for row in fetch_provider_json("metron", url, token).get("results") or []:
+        series = row.get("series") or {}
+        if row.get("image") and series.get("id"):
+            found.setdefault(str(series["id"]), {
+                "cover": row["image"], "title": series.get("name"),
+                "year": _provider_year(series.get("year_began")),
+            })
+    return found
+
+
+def _fill_covers_from_metron(results: list[dict[str, Any]], title_query: str, token: str) -> None:
+    """Give a coverless card its run's #1 cover from Metron, by Metron id or title and year."""
+    missing = [item for item in results if not item.get("cover")]
+    if not missing:
+        return
+    try:
+        found = _metron_first_issue_covers(title_query, token)
+    except Exception as exc:
+        log_event("metron_covers_failed", level="warning", error=shown(exc))
+        return
+    by_run = {
+        (normalized_title(entry["title"]), str(entry["year"] or "")): entry["cover"] for entry in found.values()
+    }
+    for item in missing:
+        metron_id = str((item.get("providerIds") or {}).get("metron") or "")
+        cover = (found.get(metron_id) or {}).get("cover") or by_run.get(
+            (normalized_title(item.get("title")), str(item.get("yearBegan") or "")))
+        if cover:
+            item["cover"] = cover
+            item["coverProvider"] = "Metron"
 
 
 def _rank_discovered(

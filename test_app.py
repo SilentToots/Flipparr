@@ -39,6 +39,11 @@ def comic_page(label: str = "page") -> bytes:
     return buffer.getvalue()
 
 
+# The real Metron cover fallback, for the tests about it; every other test
+# has it answer nothing, so no search test reaches Metron from CI.
+REAL_METRON_FIRST_ISSUE_COVERS = app._metron_first_issue_covers
+
+
 class FilenameParserTests(unittest.TestCase):
     def setUp(self):
         app._PROVIDER_JSON_CACHE.clear()
@@ -46,10 +51,13 @@ class FilenameParserTests(unittest.TestCase):
         app._PROVIDER_NEXT_REQUEST_AT.clear()
         self.provider_wait = patch("app._wait_for_provider_slot")
         self.provider_persist = patch("app.persist_provider_cache")
+        self.metron_covers = patch("app._metron_first_issue_covers", return_value={})
         self.provider_wait.start()
         self.provider_persist.start()
+        self.metron_covers.start()
 
     def tearDown(self):
+        self.metron_covers.stop()
         self.provider_persist.stop()
         self.provider_wait.stop()
         _RELEASE_CANDIDATES.clear()
@@ -860,6 +868,81 @@ class FilenameParserTests(unittest.TestCase):
         gcd.assert_not_called()
         self.assertEqual(result["providersChecked"], ["Metron", "Comic Vine"],
                          "GCD is the fallback, asked only when the others lack the title (owner, 2026-09-30)")
+
+    def test_a_run_no_catalog_gave_a_cover_gets_its_first_issue_cover_from_metron(self):
+        metron_result = {"results": [
+            {"provider": "metron", "providerName": "Metron", "providerSeriesId": "16945",
+             "title": "Cyberpunk 2077: Jayk's Case", "yearBegan": 2026, "cover": None},
+            {"provider": "metron", "providerName": "Metron", "providerSeriesId": "5900",
+             "title": "Cyberpunk 2077: XOXO", "yearBegan": 2023, "cover": None},
+        ]}
+        comic_result = {"results": [
+            {"provider": "comic_vine", "providerName": "Comic Vine", "providerSeriesId": "88",
+             "title": "Cyberpunk 2077: Trauma Team", "yearBegan": 2020, "cover": None},
+        ]}
+        issues = {"results": [
+            {"id": 1, "image": "https://static.metron.cloud/media/issue/jayk.jpg",
+             "series": {"id": 16945, "name": "Cyberpunk 2077: Jayk's Case", "year_began": 2026}},
+            {"id": 2, "image": "https://static.metron.cloud/media/issue/trauma.jpg",
+             "series": {"id": 1538, "name": "Cyberpunk 2077: Trauma Team", "year_began": 2020}},
+        ]}
+        with patch("app._metron_first_issue_covers", new=REAL_METRON_FIRST_ISSUE_COVERS), \
+             patch("app.load_provider_config", return_value={
+            "metron": {"enabled": True, "token": "token"},
+            "comic_vine": {"enabled": True, "apiKey": "key"},
+        }), patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+             patch("app.discover_metron_series", return_value=metron_result), \
+             patch("app.discover_comic_vine_series", return_value=comic_result), \
+             patch("app.discover_gcd_series", return_value={"results": []}), \
+             patch("app.fetch_provider_json", return_value=issues) as fetch:
+            result = discover_series("Cyberpunk")
+        covers = {run["title"]: (run["cover"], run.get("coverProvider")) for run in result["results"]}
+        self.assertEqual(covers["Cyberpunk 2077: Jayk's Case"],
+                         ("https://static.metron.cloud/media/issue/jayk.jpg", "Metron"), "by Metron's series id")
+        self.assertEqual(covers["Cyberpunk 2077: Trauma Team"],
+                         ("https://static.metron.cloud/media/issue/trauma.jpg", "Metron"),
+                         "a Comic Vine run by its title and year")
+        self.assertEqual(covers["Cyberpunk 2077: XOXO"], (None, None), "no #1 cover, no cover")
+        fetch.assert_called_once()
+        asked = urllib.parse.parse_qs(urllib.parse.urlsplit(fetch.call_args.args[1]).query)
+        self.assertEqual((asked["series_name"], asked["number"]), (["Cyberpunk"], ["1"]))
+
+    def test_metron_is_not_asked_for_covers_when_every_card_has_one(self):
+        metron_result = {"results": [{"provider": "metron", "providerName": "Metron", "providerSeriesId": "9",
+                                      "title": "Saga", "yearBegan": 2012, "cover": "https://covers.test/saga.jpg"}]}
+        with patch("app._metron_first_issue_covers", new=REAL_METRON_FIRST_ISSUE_COVERS), \
+             patch("app.load_provider_config", return_value={"metron": {"enabled": True, "token": "token"}}), \
+             patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+             patch("app.discover_metron_series", return_value=metron_result), \
+             patch("app.fetch_provider_json") as fetch:
+            discover_series("Saga")
+        fetch.assert_not_called()
+
+    def test_metron_is_not_asked_for_covers_when_its_search_failed(self):
+        comic_result = {"results": [{"provider": "comic_vine", "providerName": "Comic Vine", "providerSeriesId": "8",
+                                     "title": "Saga", "yearBegan": 2012, "cover": None}]}
+        with patch("app._metron_first_issue_covers", new=REAL_METRON_FIRST_ISSUE_COVERS), \
+             patch("app.load_provider_config", return_value={
+                 "metron": {"enabled": True, "token": "token"}, "comic_vine": {"enabled": True, "apiKey": "key"}}), \
+             patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+             patch("app.discover_metron_series", side_effect=RuntimeError("upstream service unavailable")), \
+             patch("app.discover_comic_vine_series", return_value=comic_result), \
+             patch("app.discover_gcd_series", return_value={"results": []}), \
+             patch("app.fetch_provider_json") as fetch:
+            result = discover_series("Saga")
+        self.assertEqual([(run["title"], run["cover"]) for run in result["results"]], [("Saga", None)])
+        fetch.assert_not_called()
+
+    def test_a_failed_metron_cover_request_leaves_the_search_as_it_was(self):
+        metron_result = {"results": [{"provider": "metron", "providerName": "Metron", "providerSeriesId": "9",
+                                      "title": "Saga", "yearBegan": 2012, "cover": None}]}
+        with patch("app._metron_first_issue_covers", new=REAL_METRON_FIRST_ISSUE_COVERS), \
+             patch("app.load_provider_config", return_value={"metron": {"enabled": True, "token": "token"}}), \
+             patch("app._discovery_library_view", return_value={"keys": set(), "providerIds": set()}), \
+             patch("app.discover_metron_series", return_value=metron_result), \
+             patch("app.fetch_provider_json", side_effect=OSError("down")):
+            result = discover_series("Saga")
+        self.assertEqual([(run["title"], run["cover"]) for run in result["results"]], [("Saga", None)])
 
     def test_a_provider_that_fails_does_not_take_the_search_with_it(self):
         comic_result = {
