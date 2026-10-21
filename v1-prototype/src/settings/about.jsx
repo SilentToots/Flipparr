@@ -21,8 +21,12 @@ const DATA_CREDITS = [
   { name: "Grand Comics Database", href: "https://www.comics.org/",
     text: "Series, issue and creator data from the Grand Comics Database\u2122, used under the Creative Commons Attribution-ShareAlike 4.0 licence.",
     licence: { label: "CC BY-SA 4.0", href: "https://creativecommons.org/licenses/by-sa/4.0/" } },
+  // Metron asks for credit with the source, the licence and a note of any
+  // changes, on an about or credits screen (its "Using Metron in Commercial
+  // Software", 2026-10-04). Its covers are not under that licence.
   { name: "Metron", href: "https://metron.cloud/",
-    text: "Issue details, release dates, age ratings and story arcs, through Metron\u2019s API with your account." },
+    text: "Issue details, release dates, age ratings and story arcs, through Metron\u2019s API with your account, used under the Creative Commons Attribution-ShareAlike 4.0 licence. Flipparr reshapes the data to fit its own catalogue.",
+    licence: { label: "CC BY-SA 4.0", href: "https://creativecommons.org/licenses/by-sa/4.0/" } },
   { name: "Comic Vine", href: "https://comicvine.gamespot.com/",
     text: "Issue and volume details through Comic Vine\u2019s API with your key, for the non-commercial use its terms allow." },
   { name: "Open Library", href: "https://openlibrary.org/",
