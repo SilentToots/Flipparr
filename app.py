@@ -13901,8 +13901,25 @@ def release_calendar(today: dt.date | None = None) -> dict[str, Any]:
             shelves[name] = {"date": start.isoformat(), "issues": issues}
         except Exception as exc:
             # One shelf failing must not take the other with it.
-            shelves[name] = {"date": start.isoformat(), "issues": [], "error": str(exc)}
+            shelves[name] = {"date": start.isoformat(), "issues": [], "error": _release_week_error(exc)}
+            log_event("release_week_unavailable", level="warning", week=start.isoformat(), error=shown(exc))
     return {"available": True, **shelves}
+
+
+def _release_week_error(exc: BaseException) -> str:
+    """What a shelf says when its week could not be fetched.
+
+    Metron down answered the shelf with "<urlopen error upstream service
+    unavailable>" (the owner, 2026-10-22). A week Flipparr has seen before is
+    shown from the provider cache through an outage; one it has not -- the
+    week coming, on a new week's first look -- can only say Metron is not
+    answering, which is the part a person can act on: try again later.
+    """
+    unreachable = isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)) or (
+        isinstance(exc, urllib.error.HTTPError) and exc.code >= 500)
+    if unreachable:
+        return "Metron, where release dates come from, isn\u2019t answering right now. Try again later."
+    return f"Metron: {shown(exc)}"
 
 
 def _import_gcd_run(query: str, provider_series_id: str) -> tuple[dict[str, Any], dict[str, Any]]:

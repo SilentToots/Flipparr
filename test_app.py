@@ -6745,6 +6745,20 @@ class ReleaseCalendarTests(unittest.TestCase):
         self.assertEqual(len(result["upcoming"]["issues"]), 1)
         self.assertEqual(result["upcoming"]["date"], "2026-09-09")
 
+    def test_a_week_metron_cannot_answer_says_so_in_words(self):
+        def down(start, end, token):
+            raise urllib.error.URLError("upstream service unavailable")
+
+        catalog = types.SimpleNamespace(catalog=lambda: {"series": []})
+        with patch("app.load_provider_config",
+                   return_value={"metron": {"enabled": True, "token": "t"}}), \
+             patch("app.fetch_release_calendar", side_effect=down), \
+             patch("app.catalog_store", return_value=catalog):
+            result = app.release_calendar(dt.date(2026, 10, 22))
+        self.assertEqual(result["upcoming"]["error"],
+                         "Metron, where release dates come from, isn\u2019t answering right now. Try again later.")
+        self.assertNotIn("urlopen", result["upcoming"]["error"])
+
     def test_the_week_before_last_is_offered_too(self):
         """A comic is easy to miss by days; its shelf has already moved up."""
         weeks = []
