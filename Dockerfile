@@ -85,8 +85,18 @@ ENV FLIPPARR_BUILD=${FLIPPARR_BUILD} \
 # carries no condition. It also covers .cb7 and .cbt, which were routed to a
 # zip reader and could never have worked. The build is libarchive-build's,
 # with the compression libraries it was built against.
+#
+# The base image is pinned, so Debian's security fixes to the trust store and
+# OpenSSL are taken here, at build: ca-certificates 20250419~deb12u2 drops the
+# emSign ECC Root CA - G3, whose intermediates' keys were found to be
+# guessable (eMudhra, October 2026; CVE-2026-111943, DSA-6572-1). Before it,
+# Flipparr's outgoing requests trusted a certificate from those keys -- the
+# test site dv-g3b-emudhra.we-have-a-problem.com answered "That's bad!" from
+# the running container (2026-10-21). Python checks no revocation, so the
+# trust store is the only defence; tools/tls_trust_check.py checks it.
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes zlib1g libbz2-1.0 liblzma5 libzstd1 liblz4-1 \
+ && apt-get install --only-upgrade --no-install-recommends --yes ca-certificates openssl libssl3 \
  && rm -rf /var/lib/apt/lists/*
 # The caches' own volume (compose mounts it at /cache): made here, owned by
 # the uid the container runs as, so a named volume comes up writable rather
