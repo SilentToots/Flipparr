@@ -49,6 +49,7 @@ class FilenameParserTests(unittest.TestCase):
         app._PROVIDER_JSON_CACHE.clear()
         app._PROVIDER_JSON_INFLIGHT.clear()
         app._PROVIDER_NEXT_REQUEST_AT.clear()
+        app._PROVIDER_DOWN.clear()
         self.provider_wait = patch("app._wait_for_provider_slot")
         self.provider_persist = patch("app.persist_provider_cache")
         self.metron_covers = patch("app._metron_first_issue_covers", return_value={})
@@ -61,6 +62,88 @@ class FilenameParserTests(unittest.TestCase):
         self.provider_persist.stop()
         self.provider_wait.stop()
         _RELEASE_CANDIDATES.clear()
+
+    def test_a_provider_that_does_not_answer_rests_and_then_is_asked_again(self):
+        url = f"{app.METRON_API_BASE}/series/?name=Saga"
+        down = urllib.error.URLError("upstream service unavailable")
+        with patch("app.fetch_json_with_headers", side_effect=down) as fetch:
+            with self.assertRaises(urllib.error.URLError):
+                app.fetch_provider_json("metron", url, "token")
+            with self.assertRaisesRegex(app.ProviderUnreachable, "Metron is not answering"):
+                app.fetch_provider_json("metron", url, "token")
+        self.assertEqual(fetch.call_count, 1, "resting, it is not asked again at once")
+        app._note_provider_down("metron", down)
+        self.assertAlmostEqual(app._provider_rest_left("metron"), app._PROVIDER_REST_FIRST_SECONDS, delta=2,
+                               msg="a failure inside the rest, from a request already in flight, does not lengthen it")
+        self.assertAlmostEqual(app._provider_rest_left("metron"), app._PROVIDER_REST_FIRST_SECONDS, delta=2)
+        app._PROVIDER_DOWN["metron"]["until"] = time.time() - 1
+        with patch("app.fetch_json_with_headers", side_effect=down):
+            with self.assertRaises(urllib.error.URLError):
+                app.fetch_provider_json("metron", url, "token")
+        self.assertAlmostEqual(app._provider_rest_left("metron"), 2 * app._PROVIDER_REST_FIRST_SECONDS, delta=2,
+                               msg="the rest doubles while it keeps failing")
+        app._PROVIDER_DOWN["metron"]["until"] = time.time() - 1
+        with patch("app.fetch_json_with_headers", return_value={"results": []}):
+            self.assertEqual(app.fetch_provider_json("metron", url, "token"), {"results": []})
+        self.assertNotIn("metron", app._PROVIDER_DOWN, "an answer ends the rest")
+
+    def test_a_provider_down_answers_from_its_saved_copy(self):
+        url = f"{app.METRON_API_BASE}/issue/?store_date_range_after=2026-10-28"
+        key = app._provider_cache_key("metron", url, "token")
+        app._PROVIDER_JSON_CACHE[key] = {"saved_at": time.time() - 3 * 24 * 60 * 60, "status": 200,
+                                         "data": {"results": [{"id": 1}]}}
+        with patch("app.fetch_json_with_headers", side_effect=TimeoutError("timed out")):
+            self.assertEqual(app.fetch_provider_json("metron", url, "token"), {"results": [{"id": 1}]})
+        self.assertIn("metron", app._PROVIDER_DOWN)
+        with patch("app.fetch_json_with_headers") as fetch:
+            self.assertEqual(app.fetch_provider_json("metron", url, "token"), {"results": [{"id": 1}]})
+        fetch.assert_not_called()
+
+    def test_a_refusal_is_not_an_outage_and_force_always_asks(self):
+        url = f"{app.METRON_API_BASE}/series/?page=1"
+        refused = urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        with patch("app.fetch_json_with_headers", side_effect=refused), self.assertRaises(urllib.error.HTTPError):
+            app.fetch_provider_json("metron", url, "token")
+        self.assertNotIn("metron", app._PROVIDER_DOWN, "a 401 is the credential, not the provider down")
+        app._PROVIDER_DOWN["metron"] = {"failures": 1.0, "until": time.time() + 600}
+        with patch("app.fetch_json_with_headers", return_value={"count": 3}) as fetch:
+            self.assertEqual(app.fetch_provider_json("metron", url, "token", force=True), {"count": 3})
+        fetch.assert_called_once()
+        self.assertNotIn("metron", app._PROVIDER_DOWN)
+
+    def test_a_server_error_is_an_outage(self):
+        url = f"{app.METRON_API_BASE}/series/?page=2"
+        failing = urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
+        with patch("app.fetch_json_with_headers", side_effect=failing), self.assertRaises(urllib.error.HTTPError):
+            app.fetch_provider_json("metron", url, "token")
+        self.assertIn("metron", app._PROVIDER_DOWN)
+
+    def test_the_weeks_ahead_are_fetched_into_the_cache(self):
+        weeks = []
+        with patch("app.load_provider_config", return_value={"metron": {"enabled": True, "token": "t"}}), \
+             patch("app.fetch_release_calendar", side_effect=lambda start, end, token: weeks.append((start, end)) or []):
+            self.assertEqual(app.prefetch_release_weeks(dt.date(2026, 10, 22)), 3)
+        self.assertEqual([start.isoformat() for start, _ in weeks], ["2026-10-28", "2026-11-04", "2026-11-11"])
+        with patch("app.load_provider_config", return_value={"metron": {"enabled": True, "token": "t"}}), \
+             patch("app.fetch_release_calendar", side_effect=urllib.error.URLError("down")) as fetch:
+            self.assertEqual(app.prefetch_release_weeks(dt.date(2026, 10, 22)), 0)
+        self.assertEqual(fetch.call_count, 1, "a failing provider is not asked for the next weeks too")
+        with patch("app.load_provider_config", return_value={}), patch("app.fetch_release_calendar") as fetch:
+            self.assertEqual(app.prefetch_release_weeks(dt.date(2026, 10, 22)), 0)
+        fetch.assert_not_called()
+
+    def test_the_weeks_ahead_are_fetched_only_when_due(self):
+        due = app._RELEASE_PREFETCH_DUE[0]
+        try:
+            app._RELEASE_PREFETCH_DUE[0] = 1000.0
+            with patch("app.prefetch_release_weeks", return_value=3) as prefetch:
+                self.assertFalse(app.prefetch_release_weeks_if_due(now=999.0))
+                self.assertTrue(app.prefetch_release_weeks_if_due(now=1000.0))
+                self.assertFalse(app.prefetch_release_weeks_if_due(now=1001.0))
+            prefetch.assert_called_once()
+            self.assertGreaterEqual(app._RELEASE_PREFETCH_DUE[0], 1000.0 + app.RELEASE_PREFETCH_EVERY_SECONDS)
+        finally:
+            app._RELEASE_PREFETCH_DUE[0] = due
 
     def test_authenticated_provider_requests_are_cached_and_coalesced(self):
         payload = {"results": [{"id": 7}]}

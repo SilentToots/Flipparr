@@ -34,6 +34,7 @@ import mimetypes
 import os
 import platform
 import posixpath
+import random
 import re
 import secrets
 import functools
@@ -3235,6 +3236,59 @@ def _wait_for_provider_slot(provider_id: str) -> None:
         time.sleep(wait_seconds)
 
 
+# A provider that does not answer at all -- no connection, a timeout, a
+# 5xx -- rests: for a minute after it first fails, doubling to fifteen while
+# it keeps failing, its requests answer at once from the saved copy if there
+# is one and with ProviderUnreachable if not. Metron down (2026-10-21) held
+# every search up for its 12-second timeout and more, every time (the owner,
+# 2026-10-22). The first request after the rest asks again; an answer ends
+# it. `force` -- a connection test, a person's explicit check -- always asks.
+_PROVIDER_REST_FIRST_SECONDS = 60.0
+_PROVIDER_REST_LONGEST_SECONDS = 15 * 60.0
+_PROVIDER_DOWN: dict[str, dict[str, float]] = {}
+
+
+class ProviderUnreachable(urllib.error.URLError):
+    """A provider resting after it stopped answering."""
+
+
+def _provider_unreachable(exc: BaseException) -> bool:
+    """Whether a failure means the provider did not answer, not that it said no."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def _provider_rest_left(provider_id: str) -> float:
+    with _PROVIDER_JSON_LOCK:
+        down = _PROVIDER_DOWN.get(provider_id)
+        return max(0.0, float(down["until"]) - time.time()) if down else 0.0
+
+
+def _note_provider_down(provider_id: str, exc: BaseException) -> None:
+    with _PROVIDER_JSON_LOCK:
+        down = _PROVIDER_DOWN.get(provider_id) or {"failures": 0.0, "until": 0.0}
+        if float(down["until"]) > time.time():
+            # Asked alongside the request that started this rest (a search's
+            # title, creator and publisher lookups): one outage, one step.
+            return
+        down["failures"] = float(down["failures"]) + 1
+        rest = min(_PROVIDER_REST_LONGEST_SECONDS,
+                   _PROVIDER_REST_FIRST_SECONDS * 2 ** (int(down["failures"]) - 1))
+        down["until"] = time.time() + rest
+        _PROVIDER_DOWN[provider_id] = down
+    log_event("provider_unreachable", level="warning", provider=provider_id,
+              failures=int(down["failures"]), rest_seconds=int(rest), error=shown(exc))
+
+
+def _note_provider_answered(provider_id: str) -> None:
+    with _PROVIDER_JSON_LOCK:
+        down = _PROVIDER_DOWN.pop(provider_id, None)
+    if down:
+        log_event("provider_answering_again", level="info", provider=provider_id,
+                  failures=int(down["failures"]))
+
+
 def _cool_down_provider_requests(provider_id: str, retry_after_seconds: int) -> None:
     with _PROVIDER_REQUEST_LOCK:
         _PROVIDER_NEXT_REQUEST_AT[provider_id] = max(
@@ -3294,6 +3348,13 @@ def fetch_provider_json(
         event.wait(timeout + max(_PROVIDER_MIN_INTERVAL_SECONDS.get(provider_id, 1.0), 5.0))
 
     try:
+        resting = 0.0 if force else _provider_rest_left(provider_id)
+        if resting:
+            minutes = max(1, round(resting / 60))
+            name = str((PROVIDER_DEFINITIONS.get(provider_id) or {}).get("name") or provider_id)
+            raise ProviderUnreachable(
+                f"{name} is not answering; Flipparr asks again in about "
+                f"{minutes} minute{'s' if minutes != 1 else ''}")
         _wait_for_provider_slot(provider_id)
         _PROVIDER_RESPONSE_HEADERS.value = {}
         if timeout == 12.0:
@@ -3332,6 +3393,20 @@ def fetch_provider_json(
                     _PROVIDER_JSON_INFLIGHT.pop(key, None)
                     event.set()
                 raise limited
+        elif _provider_unreachable(exc):
+            if not isinstance(exc, ProviderUnreachable):
+                _note_provider_down(provider_id, exc)
+            # Stale-if-error: what the provider said last is better than
+            # nothing while it is down (a release week fetched ahead, a run's
+            # issue list), for as long as a stale copy is kept at all.
+            if stale_entry and time.time() - float(stale_entry.get("saved_at") or 0) < _PROVIDER_CACHE_STALE_SECONDS:
+                payload = stale_entry["data"]
+                used_stale_cache = True
+            else:
+                with _PROVIDER_JSON_LOCK:
+                    _PROVIDER_JSON_INFLIGHT.pop(key, None)
+                    event.set()
+                raise
         else:
             miss_code = (
                 exc.code
@@ -3351,6 +3426,8 @@ def fetch_provider_json(
                 persist_provider_cache(key, provider_id, saved_at, miss_code, None)
             raise
 
+    if not used_stale_cache:
+        _note_provider_answered(provider_id)
     saved_at = time.time()
     with _PROVIDER_JSON_LOCK:
         if not used_stale_cache:
@@ -13906,6 +13983,46 @@ def release_calendar(today: dt.date | None = None) -> dict[str, Any]:
     return {"available": True, **shelves}
 
 
+# The weeks coming are fetched ahead, twice a day, so a Metron outage still
+# has them to show from the provider cache: next week's shelf had never been
+# fetched when Metron went down on 2026-10-21 and stayed empty (the owner,
+# 2026-10-22). Metron lists issues weeks before they ship. Three requests a
+# turn, at a time of day that differs per install, as Metron asks.
+RELEASE_PREFETCH_WEEKS = 3
+RELEASE_PREFETCH_EVERY_SECONDS = 12 * 60 * 60
+_RELEASE_PREFETCH_DUE = [time.time() + random.uniform(5 * 60, 60 * 60)]
+
+
+def prefetch_release_weeks(today: dt.date | None = None) -> int:
+    """Fetch the coming weeks' releases into the provider cache; how many weeks answered."""
+    metron = load_provider_config().get("metron") or {}
+    if not (metron.get("enabled") and metron.get("token")):
+        return 0
+    anchor = today or dt.datetime.now().astimezone().date()
+    fetched = 0
+    for ahead in range(RELEASE_PREFETCH_WEEKS):
+        start, end = _ship_week(anchor, weeks_back=-ahead)
+        try:
+            fetch_release_calendar(start, end, str(metron["token"]))
+            fetched += 1
+        except Exception as exc:  # noqa: BLE001 -- the next turn tries again
+            log_event("release_prefetch_failed", level="warning", week=start.isoformat(), error=shown(exc))
+            break
+    return fetched
+
+
+def prefetch_release_weeks_if_due(now: float | None = None) -> bool:
+    """The metadata worker's turn at fetching the weeks ahead, when it is due."""
+    now = time.time() if now is None else now
+    if now < _RELEASE_PREFETCH_DUE[0]:
+        return False
+    _RELEASE_PREFETCH_DUE[0] = now + RELEASE_PREFETCH_EVERY_SECONDS + random.uniform(0, 30 * 60)
+    weeks = prefetch_release_weeks()
+    if weeks:
+        log_event("release_weeks_prefetched", level="info", weeks=weeks)
+    return True
+
+
 def _release_week_error(exc: BaseException) -> str:
     """What a shelf says when its week could not be fetched.
 
@@ -18648,8 +18765,13 @@ def _metadata_enrichment_step(store: CatalogStore, stop_event: threading.Event) 
         return
     monitored = store.claim_monitored_series_refresh()
     if not monitored:
-        # Idle: ask about one run whose files name no creator, so search
-        # by creator finds it too.
+        # Idle: fetch the weeks of releases ahead when that is due, then ask
+        # about one run whose files name no creator, so search by creator
+        # finds it too.
+        try:
+            prefetch_release_weeks_if_due()
+        except Exception as exc:  # noqa: BLE001 -- never the worker's end
+            log_exception("release_prefetch_failed", exc, level="warning")
         try:
             synced = sync_next_run_creators(store)
         except Exception:
