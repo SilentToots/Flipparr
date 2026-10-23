@@ -6599,6 +6599,74 @@ def _stop_torrent_for_job(store: Any, download: dict[str, Any]) -> None:
         log_event("torrent_stop_failed", level="info", job_id=int(download["job_id"]), error=str(exc)[:160])
 
 
+def _browser_check(exc: BaseException) -> bool:
+    """Whether a refusal is Cloudflare asking for a browser, not the file refused."""
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code not in (403, 503):
+        return False
+    if str((exc.headers or {}).get("cf-mitigated") or "").casefold() == "challenge":
+        return True
+    try:
+        body = exc.read(4096) or b""
+    except Exception:  # noqa: BLE001 -- an unreadable body is not a check
+        body = b""
+    return b"just a moment" in body[:4096].lower()
+
+
+def _solver_clearance(url: str) -> dict[str, str]:
+    """Headers that pass a site's browser check: the page fetcher's pass for it.
+
+    The page fetcher visits the site's front page in its browser, which
+    passes Cloudflare's check and is given a `cf_clearance` cookie for the
+    browser and address that passed it. Sent with the same user agent from
+    the same server, the cookie lets an ordinary request through.
+    """
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname:
+        raise ValueError("The download's address is not one the page fetcher can visit")
+    answer = solver_request({"cmd": "request.get", "url": f"https://{parts.hostname}/", "maxTimeout": SOLVER_TIMEOUT_MS})
+    solution = answer.get("solution") or {}
+    cookies = [cookie for cookie in solution.get("cookies") or []
+               if cookie.get("name") and str(parts.hostname).endswith(str(cookie.get("domain") or "").lstrip("."))]
+    if not any(cookie.get("name") == "cf_clearance" for cookie in cookies) or not solution.get("userAgent"):
+        raise ValueError("The page fetcher could not get past the file server's browser check")
+    return {
+        "User-Agent": str(solution["userAgent"]),
+        "Cookie": "; ".join(f"{cookie['name']}={cookie.get('value') or ''}" for cookie in cookies),
+    }
+
+
+def _open_direct_site_file(link: str):
+    """The download's response, through the file server's browser check if it asks.
+
+    GetComics' file server (fs2.comicfiles.ru) began answering ordinary
+    requests with Cloudflare's "Just a moment..." check, even a browser's
+    user agent: Justice League Unlimited #3 was refused 403 on 2026-10-23,
+    and the same refusals on 2026-09-28 and 09-30 were this too. The page
+    fetcher passes the check; its pass, sent back with the request, fetched
+    the 50 MB file (2026-10-23).
+    """
+    try:
+        return _safe_urlopen(urllib.request.Request(link, headers={"User-Agent": f"Flipparr/{APP_VERSION}"}), timeout=120.0)
+    except urllib.error.HTTPError as exc:
+        if not _browser_check(exc):
+            raise
+        checked = exc.geturl() or link
+    try:
+        headers = _solver_clearance(checked)
+    except Exception as exc:  # noqa: BLE001 -- said in words on the row
+        raise ValueError(
+            "the download site's file server asked for a browser check, and the page fetcher "
+            f"could not pass it ({exc}). Try again later, or download it there and use Upload a file."
+        ) from exc
+    log_event("direct_site_browser_check_passed", host=urllib.parse.urlsplit(checked).hostname)
+    # Straight to the server that checked: the pass is its cookie, and a
+    # redirect from the post's link to another host drops cookies
+    # (_KeepCredentialsHome), so through the link it never arrived. A redacted
+    # address -- a key taken out of it -- is no use; then the link it is.
+    again = checked if "[REDACTED]" not in checked else link
+    return _safe_urlopen(urllib.request.Request(again, headers=headers), timeout=120.0)
+
+
 def _looks_like_a_page(content_type: str, first_bytes: bytes) -> bool:
     if content_type.split(";")[0].strip().lower() in {"text/html", "application/xhtml+xml"}:
         return True
@@ -6637,8 +6705,7 @@ def _fetch_direct_site_download(download_id: int, job_id: int, post_url: str, ti
         link = direct_site_download_link(post_url, wanted, years)
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True, exist_ok=True)
-        request = urllib.request.Request(link, headers={"User-Agent": f"Flipparr/{APP_VERSION}"})
-        with _safe_urlopen(request, timeout=120.0) as response:
+        with _open_direct_site_file(link) as response:
             name = _download_filename(response, title)
             total = int(response.headers.get("Content-Length") or 0)
             destination = folder / name

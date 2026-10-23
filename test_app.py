@@ -4230,6 +4230,73 @@ class DirectSiteDownloadTests(unittest.TestCase):
         self.assertEqual(len(final), 1)
         self.assertTrue(str(final[0].kwargs["sab_storage"]).endswith("/11"))
 
+    @staticmethod
+    def _refusal(code, *, challenge, body=b""):
+        headers = email.message.Message()
+        if challenge:
+            headers["cf-mitigated"] = "challenge"
+        return urllib.error.HTTPError("https://fs2.comicfiles.ru/2025.01.22/JLU%20003.cbr", code, "Forbidden",
+                                      headers, io.BytesIO(body))
+
+    def test_the_file_servers_browser_check_is_passed_with_the_page_fetchers_pass(self):
+        body = b"Rar!\x1a\x07\x00" + b"x" * 1000
+        store = Mock()
+        opened = []
+
+        def urlopen(request, timeout):
+            opened.append({**dict(request.header_items()), "url": request.full_url})
+            if len(opened) == 1:
+                raise self._refusal(403, challenge=True)
+            return self._response(body, name="Justice League Unlimited 003 (2025).cbr")
+
+        solved = {"solution": {"userAgent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/140",
+                               "cookies": [{"name": "cf_clearance", "value": "abc", "domain": ".comicfiles.ru"},
+                                           {"name": "elsewhere", "value": "no", "domain": "other.example"}]}}
+        with tempfile.TemporaryDirectory() as folder:
+            staging = Path(folder) / "direct_site"
+            with patch("app.catalog_store", return_value=store), \
+                 patch("app.acquisition_staging_dir", return_value=staging), \
+                 patch("app.direct_site_download_link", return_value="https://comics.example/dls/token"), \
+                 patch("app.solver_request", return_value=solved) as solver, \
+                 patch("app._safe_urlopen", side_effect=urlopen):
+                app._fetch_direct_site_download(5, 11, "https://comics.example/dc/jlu-3/", "Justice League Unlimited #3")
+            self.assertEqual(len(list(staging.rglob("*.cbr"))), 1)
+        self.assertEqual(solver.call_args.args[0]["url"], "https://fs2.comicfiles.ru/",
+                         "the page fetcher visits the server that asked for the check")
+        self.assertEqual(opened[1]["url"], "https://fs2.comicfiles.ru/2025.01.22/JLU%20003.cbr",
+                         "the retry goes to the server that checked, where its cookie is good")
+        self.assertEqual(opened[1].get("Cookie"), "cf_clearance=abc")
+        self.assertEqual(opened[1].get("User-agent"), "Mozilla/5.0 (X11; Linux x86_64) Chrome/140",
+                         "the pass is good only with the browser that earned it")
+        final = [c for c in store.update_acquisition_download.call_args_list if c.args[1] == "completed"]
+        self.assertEqual(len(final), 1)
+
+    def test_a_plain_refusal_is_still_a_refusal(self):
+        store = Mock()
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("app.catalog_store", return_value=store), \
+             patch("app.acquisition_staging_dir", return_value=Path(folder) / "direct_site"), \
+             patch("app.direct_site_download_link", return_value="https://comics.example/dls/token"), \
+             patch("app.solver_request") as solver, \
+             patch("app._safe_urlopen", side_effect=self._refusal(403, challenge=False, body=b"Forbidden")):
+            app._fetch_direct_site_download(5, 11, "https://comics.example/dc/jlu-3/", "Justice League Unlimited #3")
+        solver.assert_not_called()
+        failed = [c for c in store.update_acquisition_download.call_args_list if c.args[1] == "failed"]
+        self.assertIn("403", failed[0].kwargs["error"])
+
+    def test_a_browser_check_the_page_fetcher_cannot_pass_says_so(self):
+        store = Mock()
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("app.catalog_store", return_value=store), \
+             patch("app.acquisition_staging_dir", return_value=Path(folder) / "direct_site"), \
+             patch("app.direct_site_download_link", return_value="https://comics.example/dls/token"), \
+             patch("app.solver_request", return_value={"solution": {"userAgent": "UA", "cookies": []}}), \
+             patch("app._safe_urlopen", side_effect=self._refusal(403, challenge=False,
+                                                                   body=b"<title>Just a moment...</title>")):
+            app._fetch_direct_site_download(5, 11, "https://comics.example/dc/jlu-3/", "Justice League Unlimited #3")
+        failed = [c for c in store.update_acquisition_download.call_args_list if c.args[1] == "failed"]
+        self.assertIn("browser check", failed[0].kwargs["error"])
+
     def test_a_post_taken_by_hand_is_marked_and_its_part_chosen_by_number_alone(self):
         store = Mock()
         store.record_acquisition_download.return_value = {"id": 9}
