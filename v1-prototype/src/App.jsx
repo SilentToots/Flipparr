@@ -1183,13 +1183,9 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
         busy={state === PULL_STATES.pending} settled={state !== PULL_STATES.idle && state !== PULL_STATES.pending}
         disabled={state !== PULL_STATES.idle} onClick={() => onPull(issue)} />
       <div className="comic-drawer-body">
-        {detail.state === "loading" ? <RunSynopsis loading heading="Story" /> : null}
-        {detail.state === "error" ? <p className="discover-note">Metron&rsquo;s details for this issue are unavailable right now.</p> : null}
-        {detail.state === "done" ? <>
-          {data.storyTitles?.length ? <p className="discover-story-titles">{data.storyTitles.join(" · ")}</p> : null}
-          {data.description ? <RunSynopsis text={data.description} source="Metron" /> : <p className="discover-note">Metron has no description for this issue.</p>}
-          {data.creators?.length ? <ComicDrawerCreators creators={data.creators} /> : null}
-        </> : null}
+        {/* The run first, under the band: it is the way on to following the
+            run or pulling more of it, and at the drawer's foot, under the
+            story and credits, it was read past (the owner, 2026-10-22). */}
         {issue.providerSeriesId && onOpenRun ? <ComicDrawerRow title="The run" count={1}>
           <ComicDrawerRunCard run={{ id: `metron-${issue.providerSeriesId}`, title: issue.seriesTitle, year: issue.seriesYear, cover: issue.cover }}
             onOpen={() => onOpenRun({
@@ -1199,6 +1195,13 @@ function DiscoverIssueDrawer({ issue, state, onPull, onOpenRun, onClose }) {
               publisher: issue.publisher, cover: issue.cover,
             })} />
         </ComicDrawerRow> : null}
+        {detail.state === "loading" ? <RunSynopsis loading heading="Story" /> : null}
+        {detail.state === "error" ? <p className="discover-note">Metron&rsquo;s details for this issue are unavailable right now.</p> : null}
+        {detail.state === "done" ? <>
+          {data.storyTitles?.length ? <p className="discover-story-titles">{data.storyTitles.join(" · ")}</p> : null}
+          {data.description ? <RunSynopsis text={data.description} source="Metron" /> : <p className="discover-note">Metron has no description for this issue.</p>}
+          {data.creators?.length ? <ComicDrawerCreators creators={data.creators} /> : null}
+        </> : null}
         {facts.length ? <div className="drawer-facts">
           {facts.map(([label, value]) => <span key={label}><strong>{value}</strong>{label}</span>)}
         </div> : null}
