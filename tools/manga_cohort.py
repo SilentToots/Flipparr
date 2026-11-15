@@ -53,7 +53,7 @@ def prowlarr_search(app, title):
     for form in forms:
         for release in app._prowlarr_search(service, app._plain_query_title(form) or form,
                                             categories=app.MANGA_CATEGORIES):
-            key = (release.get("title"), release.get("indexer"))
+            key = (release.get("title"), release.get("indexer"), int(release.get("size") or 0))
             if key not in seen:
                 seen.add(key)
                 found.append(release)
@@ -85,6 +85,11 @@ def discovered_series(app, title):
             "ids": pick.get("providerIds") or {}, "inLibrary": bool(pick.get("inLibrary")), "asked": title}
 
 
+def issue_numbers(preview):
+    """Every number the catalog lists, released or not: the scan offers only the rest."""
+    return [int(issue["number"]) for issue in preview.get("issues") or [] if str(issue.get("number") or "").isdigit()]
+
+
 def measure(app, series):
     preview = app.preview_discovered_run(series["ids"], series["title"])
     issues = [issue for issue in preview.get("issues") or [] if str(issue.get("number") or "").isdigit()]
@@ -92,7 +97,7 @@ def measure(app, series):
     owned = {number for number, issue in released.items() if issue.get("owned")}
     publisher = series.get("publisher") or preview.get("publisher")
     releases = prowlarr_search(app, series["title"])
-    seen, best = set(), {}
+    seen, best, posts = set(), {}, {}
     for release in releases:
         name = app._manga_release_name(release.get("title"))
         marker = app._MANGA_VOLUME.search(name)
@@ -102,6 +107,16 @@ def measure(app, series):
         if marker and len(volumes) == 1 and not app._MANGA_RANGE.search(name) \
                 and app._manga_names_series(name[: marker.start()], context):
             seen |= volumes
+        if len(volumes) == 1 and not app._MANGA_RANGE.search(name):
+            # The step-2 gate (scan_indexer_volumes): one volume at the
+            # automatic bar, counted per post (indexer, name, size).
+            number = next(iter(volumes))
+            score, _reasons = app._release_candidate_score(
+                {"title": release.get("title"), "publishDate": release.get("publishDate"),
+                 "categories": release.get("categories")}, {**context, "issueNumber": str(number)})
+            if score is not None and score >= AUTOMATIC_BAR:
+                posts.setdefault(number, set()).add(
+                    (release.get("indexer"), release.get("title"), int(release.get("size") or 0)))
         for number, issue in released.items():
             if number in owned:
                 continue
@@ -121,6 +136,8 @@ def measure(app, series):
         "grabbable": grabbable, "notGrabbable": [n for n in missing if n not in grabbable],
         "bestFor": {str(n): best[n] for n in missing if n in best},
         "indexerVolumes": sorted(seen), "indexerOnly": sorted(seen - set(released)),
+        "offered": sorted(number for number, found in posts.items()
+                          if number not in set(issue_numbers(preview)) and number != 0 and len(found) >= 2),
         "releasesSearched": len(releases),
     }
 
@@ -148,7 +165,7 @@ def main():
             rows.append({"series": series["title"], "error": f"{type(exc).__name__}: {exc}"})
         time.sleep(2)
     totals = {key: sum(len(row.get(key) or []) for row in rows)
-              for key in ("catalogVolumes", "owned", "missing", "grabbable", "notGrabbable", "indexerOnly")}
+              for key in ("catalogVolumes", "owned", "missing", "grabbable", "notGrabbable", "indexerOnly", "offered")}
     report = {"app": args.app or "image", "series": len(rows), "totals": totals, "rows": rows}
     if args.out:
         with open(args.out, "w") as handle:
@@ -159,7 +176,7 @@ def main():
             continue
         print(f"{row['series'][:40]:40} catalog {len(row['catalogVolumes']):>3} owned {len(row['owned']):>3} "
               f"missing {len(row['missing']):>3} grab {len(row['grabbable']):>3} "
-              f"indexer-only {row['indexerOnly']}")
+              f"indexer-only {row['indexerOnly']} offered {row['offered']}")
     print("TOTALS", totals)
 
 
