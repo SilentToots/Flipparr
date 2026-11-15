@@ -19,8 +19,9 @@ import { ComicDrawerCreators, ComicDrawerIssueCard, ComicDrawerRow, ComicDrawerR
 import { CollectionCoverage, CollectionManagement, EDIT_SECTIONS, FileInventory, GroupedIssueInventory, IssueCatalogCard, SeriesEditPanel, VolumeInventory } from "./inventory.jsx";
 import { ArrowCounterClockwise, ArrowLeft, ArrowsClockwise, Books, CheckCircle, Hourglass, ImageSquare, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
 import { useManages, useImageSrc } from "../host.js";
+import { VolumeSuggestions } from "./VolumeSuggestions.jsx";
 
-export function SeriesDrawer({ series, families, allSeries, parentCollection, dismissSignal, onBack, onClose, onRead, onMarkIssue, onMarkRun, readingVersion = 0,
+export function SeriesDrawer({ onVolumesAdded, series, families, allSeries, parentCollection, dismissSignal, onBack, onClose, onRead, onMarkIssue, onMarkRun, readingVersion = 0,
   coverBusy = false, coverError = "", onSelectSeriesCover, onUploadSeriesCover,
   backdropBusy = false, backdropError = "", onSaveBackdrop, onSetDirection, onRate, onRateIssue, onRequest, onViewRequests, requestBusy, onAddAlias, onSyncIssues, onFindRun, onMergeRun, onRebuildRun, rebuilding = false, rebuildResult = "", onCreateFamily, onSetFamily, onOpenWorkbench, onOpenCover, onChangeSeriesCover, onFixSeriesMatch, onOpenContents, onChangeRun, onEditIssue, onReplace, onUnfollow, unfollowBusy = false, onSetFormat, onRemove, onOpenSeries, onChangeBackdrop, backdropVersion = 0, requested = false, onSetAgeRating,
   runCollections = [], onOpenRunCollection, onAddToCollection,
@@ -274,6 +275,7 @@ export function SeriesDrawer({ series, families, allSeries, parentCollection, di
     <nav className="drawer-tabs comic-drawer-tabs" aria-label="Series details" ref={tabsRef}><span className="comic-drawer-tab-glass glass-indicator" aria-hidden="true" style={tabGlass || { opacity: 0 }} />{tabs.map(([id, label]) => <button type="button" className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
     <div className="comic-drawer-body" key={tab} data-tab-move={tabMove.current || undefined}>
       {tab === "overview" ? <>
+        {admin && series.medium === "manga" ? <VolumeSuggestions series={series} onAdded={onVolumesAdded} /> : null}
         {/* The stars sit here, not in the header: there they outweighed the cover on a phone. */}
         <section className="comic-drawer-rating" aria-label={runRating(series).source === RATING_SOURCES.average ? "Your issues' average" : "Your rating"}><h3>{runRating(series).source === RATING_SOURCES.average ? "Your issues\u2019 average" : "Your rating"}</h3><StarRating rating={runRating(series)} title={series.title} size={24} onRate={(value) => onRate?.(series, value)} /></section>
         <RunSynopsis loading={synopsis.state === "loading"} text={synopsis.text} source={synopsis.source} sourcePrefix="Source:" key={series.id} />

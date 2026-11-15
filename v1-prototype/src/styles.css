@@ -195,7 +195,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .shelf-message span { min-width: 0; display: grid; gap: var(--space-4); }
 .shelf-message strong { color: var(--text); font-size: var(--text-sm); }
 .shelf-message small { color: var(--muted); font-size: var(--text-sm); }
-.shelf-message > button { flex: 0 0 auto; white-space: nowrap; margin-left: auto; min-height: 30px; padding: 0 var(--space-10); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: transparent; color: var(--text); cursor: pointer; }
+.shelf-message > button, .volume-suggestions-actions > button { flex: 0 0 auto; white-space: nowrap; margin-left: auto; min-height: 30px; padding: 0 var(--space-10); border: 1px solid var(--line-strong); border-radius: var(--radius-8); background: transparent; color: var(--text); cursor: pointer; }
+/* A manga run's volumes found on the indexers (drawers/VolumeSuggestions):
+   the shelf message in a run drawer, set off as a card, its two answers side
+   by side and wrapping under the words when the drawer is a phone's. */
+.volume-suggestions { flex-wrap: wrap; min-height: 0; border-radius: var(--radius-8); background: var(--surface-soft); }
+.volume-suggestions span { flex: 1 1 14rem; }
+.volume-suggestions-actions { display: flex; gap: var(--space-8); margin-left: auto; }
+.volume-suggestions-actions > button { margin-left: 0; }
 
 /* Search results */
 .discover-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }

@@ -1852,6 +1852,18 @@ def notification_view(row: dict[str, Any], viewer: Viewer) -> dict[str, Any] | N
                 if len(items) == 1 else "Their pages are damaged. Each stays readable until a good copy passes its checks.",
                 "tone": "warning",
                 "target": {"view": "metadata"}}
+    if row["kind"] == "volumes_found":
+        if not viewer.is_admin:
+            return None
+        numbers = sorted({str(item.get("number")) for item in payload.get("items") or [] if isinstance(item, dict)},
+                         key=lambda value: int(value) if value.isdigit() else 0)
+        if not numbers:
+            return None
+        said = f"Volume {numbers[0]}" if len(numbers) == 1 else f"Volumes {', '.join(numbers[:-1])} and {numbers[-1]}"
+        return {**base,
+                "title": f"{said} of {payload.get('title') or 'a manga you follow'} found",
+                "detail": "Posted on your indexers but not yet in a catalog. Add them from the run to have them downloaded.",
+                "target": {"view": "series", "seriesId": str(payload.get("runId"))}}
     if row["kind"] == "vision_model_retiring":
         if not viewer.is_admin:
             return None
@@ -5460,6 +5472,102 @@ def _manga_names_series(lead: str, context: dict[str, Any]) -> bool:
         normalized_title(_without_leading_article(re.sub(r"[-–—:]+", " ", form))) in wanted
         for form in leads
     )
+
+
+# How often a followed manga run's series is searched for volumes no catalog
+# lists yet: once a day, from the metadata worker's turn at the run. One
+# search per run -- a volume search ("Title v01") answers that volume only.
+VOLUME_SCAN_EVERY_SECONDS = 24 * 60 * 60
+# Two postings of a volume -- two indexers, two releases or two uploads --
+# before it is offered: one mislabelled post is not a volume.
+VOLUME_SIGHTINGS_NEEDED = 2
+
+
+def scan_indexer_volumes(series_run_id: int, *, store: CatalogStore | None = None) -> dict[str, Any]:
+    """Look on the indexers for volumes of a manga run that no catalog lists.
+
+    Comic Vine listed two of Star Wars: The Mandalorian: The Manga's four
+    volumes, and Flipparr wants only what a catalog lists, so the other two
+    were never searched for (the owner, 2026-11-15). Across a cohort of 14
+    series the indexers carried 43 volumes no catalog had (Kaiju No. 8: 3
+    listed, 16 posted). A volume counts only as a release the manga matcher
+    would take on its own -- this series, one volume, a readable book, at the
+    automatic bar -- posted at least twice; it is then offered to the admin,
+    never added unasked (the owner's choice, 2026-11-15).
+    """
+    store = store or catalog_store()
+    subject = store.volume_scan_subject(series_run_id)
+    if not subject or subject.get("format") != "manga":
+        return {"skipped": "not a manga run"}
+    prowlarr = _enabled_acquisition_service("prowlarr")
+    have = {str(number).lstrip("0") or "0" for number in subject["numbers"]}
+    decided = {str(number).lstrip("0") or "0" for number in subject["decided"]}
+    releases: list[dict[str, Any]] = []
+    seen_titles: set[tuple[str, str, int]] = set()
+    for form in _manga_title_forms(subject["title"]):
+        # Asked once for each form of the title; the same post answering both
+        # is one post, and two uploads under one name are two.
+        for release in _prowlarr_search(prowlarr, _plain_query_title(form) or form, categories=MANGA_CATEGORIES):
+            key = (str(release.get("title") or ""), str(release.get("indexer") or ""), int(release.get("size") or 0))
+            if key not in seen_titles:
+                seen_titles.add(key)
+                releases.append(release)
+    sightings: dict[str, list[dict[str, Any]]] = {}
+    for release in releases:
+        name = _manga_release_name(release.get("title"))
+        volumes = _manga_volumes(name)
+        if len(volumes) != 1 or _MANGA_RANGE.search(name):
+            continue
+        number = str(next(iter(volumes)))
+        if number in have or number in decided or number == "0":
+            continue
+        context = {"seriesTitle": subject["title"], "seriesYear": subject["year"], "publisher": subject["publisher"],
+                   "format": "manga", "issueNumber": number}
+        score, _reasons = _release_candidate_score(
+            {"title": release.get("title"), "publishDate": release.get("publishDate"),
+             "categories": release.get("categories")}, context)
+        if score < MANGA_GRAB_BAR:
+            continue
+        year = re.search(r"\b((?:19|20)\d{2})\b", name)
+        sightings.setdefault(number, []).append({
+            "title": release.get("title"), "indexer": release.get("indexer"), "score": score,
+            "size": int(release.get("size") or 0),
+            "publishDate": release.get("publishDate"), "year": int(year.group(1)) if year else None,
+        })
+    # Posts, not names: the Mandalorian's volume 3 was posted twice, both at
+    # one indexer under one name, 389 MB and 381 MB -- two uploads of it.
+    ready = {number: seen for number, seen in sightings.items()
+             if len({(item["indexer"], item["title"], item["size"]) for item in seen}) >= VOLUME_SIGHTINGS_NEEDED}
+    new = store.record_volume_sightings(series_run_id, ready)
+    store.note_volume_scan(series_run_id, len(releases))
+    if new:
+        log_event("volumes_found", series_run_id=series_run_id, volumes=new)
+        for user in store.list_users():
+            if user["role"] == "admin" and not user["disabled"]:
+                store.record_notification(
+                    int(user["id"]), "volumes_found", f"volumes:{series_run_id}",
+                    {"runId": series_run_id, "title": subject["title"],
+                     "items": [{"key": number, "number": number} for number in new]},
+                    merge=True,
+                )
+    return {"releases": len(releases), "found": sorted(ready, key=int), "new": new}
+
+
+def scan_indexer_volumes_if_due(series_run_id: int, store: CatalogStore | None = None) -> None:
+    """The metadata worker's turn at a run: its volume scan, once a day."""
+    store = store or catalog_store()
+    subject = store.volume_scan_subject(series_run_id)
+    if not subject or subject.get("format") != "manga":
+        return
+    if not store.volume_scan_due(series_run_id, VOLUME_SCAN_EVERY_SECONDS):
+        return
+    try:
+        scan_indexer_volumes(series_run_id, store=store)
+    except AcquisitionServiceOff:
+        return
+    except Exception as exc:  # noqa: BLE001 -- tried again tomorrow
+        store.note_volume_scan(series_run_id, 0, shown(exc))
+        log_event("volume_scan_failed", level="warning", series_run_id=series_run_id, error=shown(exc))
 
 
 def _manga_file_volume(name: Any) -> str | None:
@@ -18900,6 +19008,8 @@ def _metadata_enrichment_step(store: CatalogStore, stop_event: threading.Event) 
             series_run_id, str(outcome.get("provider") or "") or None
         )
         store.reconcile_acquisition_jobs()
+    # A followed manga run: volumes the indexers carry that no catalog lists.
+    scan_indexer_volumes_if_due(series_run_id, store)
     stop_event.wait(1)
 
 
@@ -21710,6 +21820,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(payload)
             return
+        volume_suggestions_get = re.fullmatch(r"/api/v1/series/(\d+)/volume-suggestions", parsed_url.path)
+        if volume_suggestions_get:
+            self.send_json({"suggestions": catalog_store().volume_suggestions(int(volume_suggestions_get.group(1)))})
+            return
         series_backdrop_match = re.fullmatch(r"/api/v1/series/(\d+)/backdrop", parsed_url.path)
         if series_backdrop_match:
             try:
@@ -22923,6 +23037,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json(result)
+            return
+        volume_suggestions_post = re.fullmatch(r"/api/v1/series/(\d+)/volume-suggestions", parsed_url.path)
+        if volume_suggestions_post:
+            # The admin's word on volumes found on the indexers: {"accept": [...]}
+            # adds them to the run, {"dismiss": [...]} stops offering them.
+            run_id = int(volume_suggestions_post.group(1))
+            store = catalog_store()
+            accept = [str(number) for number in payload.get("accept") or [] if str(number).strip()]
+            dismiss = [str(number) for number in payload.get("dismiss") or [] if str(number).strip()]
+            if not accept and not dismiss:
+                self.send_json({"error": "Name the volumes to add or set aside"}, 400)
+                return
+            viewer = self._viewer()
+            added = store.accept_volume_suggestions(run_id, accept, viewer.id if viewer else None) if accept else []
+            dismissed = store.dismiss_volume_suggestions(run_id, dismiss, viewer.id if viewer else None) if dismiss else []
+            if added:
+                store.reconcile_acquisition_jobs()
+                log_event("volumes_added", series_run_id=run_id, volumes=added)
+            self.send_json({"added": added, "dismissed": dismissed,
+                            "suggestions": store.volume_suggestions(run_id)})
             return
         series_backdrop_post = re.fullmatch(r"/api/v1/series/(\d+)/backdrop", parsed_url.path)
         if series_backdrop_post:

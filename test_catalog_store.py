@@ -5659,6 +5659,79 @@ class PagePanelTests(LibraryFixture):
             self.assertEqual(store.file_reading_direction(9999), "ltr", "a file with no run reads as a comic")
 
 
+class VolumeSuggestionTests(unittest.TestCase):
+    """Volumes the indexers carry and no catalog lists (schema 81, 2026-11-15).
+
+    Offered, never added unasked; added, an issue like any other that is
+    searched, kept through a rebuild, and merged onto when a catalog lists it.
+    """
+
+    def _store(self, root):
+        store = ReplacementStaysItsOwnRequestTests._library(self, root, numbers=(1, 2))
+        series_id = int(store.catalog()["series"][0]["id"])
+        ReplacementStaysItsOwnRequestTests._sync_issue_list(self, store, series_id, (1, 2))
+        return store, series_id
+
+    @staticmethod
+    def _seen(number, posted="2026-03-11T08:00:00Z"):
+        return [{"title": f"VIZ.Media.Example.Vol.0{number}.2026.HYBRiD.MANGA", "indexer": indexer,
+                 "score": 90, "publishDate": posted, "year": 2026} for indexer in ("NZBgeek", "NZBFinder")]
+
+    def test_a_volume_seen_is_offered_and_an_added_one_is_searched(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, series_id = self._store(Path(folder))
+            request_id = int(store.create_acquisition_request("series", series_id, "issues")["id"])
+            new = store.record_volume_sightings(series_id, {"2": self._seen(2), "3": self._seen(3), "4": self._seen(4)})
+            self.assertEqual(new, ["3", "4"], "a volume the run has is not offered")
+            self.assertEqual(store.record_volume_sightings(series_id, {"3": self._seen(3)}), [],
+                             "offered once; seen again it is renewed, not offered twice")
+            self.assertEqual([item["number"] for item in store.volume_suggestions(series_id)], ["3", "4"])
+            self.assertEqual(ReplacementStaysItsOwnRequestTests._request_issue_numbers(self, store, request_id),
+                             ["1", "2"], "nothing joins the run until the admin says so")
+
+            self.assertEqual(store.accept_volume_suggestions(series_id, ["3"], 1), ["3"])
+            store.reconcile_acquisition_jobs()
+            self.assertEqual(ReplacementStaysItsOwnRequestTests._request_issue_numbers(self, store, request_id),
+                             ["1", "2", "3"], "an added volume joins the run's follow")
+            issue = next(issue for issue in store.catalog()["series"][0]["issues"] if str(issue["number"]) == "3")
+            self.assertEqual(issue["releaseState"], "released",
+                             "dated by its first posting, so it reads as released and is searched -- "
+                             "a 2026 volume with only its year would read 'Date needed'")
+            with store._connect() as connection:
+                jobs = connection.execute(
+                    "SELECT COUNT(*) FROM acquisition_jobs JOIN issues ON issues.id=acquisition_jobs.issue_id "
+                    "WHERE issues.series_run_id=? AND issues.issue_number='3'", (series_id,)).fetchone()[0]
+            self.assertEqual(jobs, 1)
+            self.assertEqual([item["number"] for item in store.volume_suggestions(series_id)], ["4"])
+
+    def test_an_added_volume_outlives_a_rebuild_and_a_catalog_merges_onto_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, series_id = self._store(Path(folder))
+            store.record_volume_sightings(series_id, {"3": self._seen(3)})
+            store.accept_volume_suggestions(series_id, ["3"], 1)
+            store.rebuild_series_run(series_id)
+            numbers = sorted(str(issue["number"]) for issue in store.catalog()["series"][0]["issues"])
+            self.assertIn("3", numbers, "a rebuild keeps what the admin added, though no catalog lists it")
+            with store._connect() as connection:
+                before = connection.execute("SELECT id FROM issues WHERE series_run_id=? AND issue_number='3'",
+                                            (series_id,)).fetchone()[0]
+            ReplacementStaysItsOwnRequestTests._sync_issue_list(self, store, series_id, (1, 2, 3))
+            with store._connect() as connection:
+                rows = connection.execute("SELECT id FROM issues WHERE series_run_id=? AND issue_number='3'",
+                                          (series_id,)).fetchall()
+            self.assertEqual([row[0] for row in rows], [before], "the catalog's volume 3 is the added one, not a second")
+
+    def test_a_volume_set_aside_is_not_offered_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, series_id = self._store(Path(folder))
+            store.record_volume_sightings(series_id, {"5": self._seen(5)})
+            self.assertEqual(store.dismiss_volume_suggestions(series_id, ["5"], 1), ["5"])
+            self.assertEqual(store.record_volume_sightings(series_id, {"5": self._seen(5)}), [])
+            self.assertEqual(store.volume_suggestions(series_id), [])
+            self.assertIn("5", store.volume_scan_subject(series_id)["decided"])
+            self.assertEqual(store.accept_volume_suggestions(series_id, ["5"], 1), [], "only a pending one is added")
+
+
 class ReplacementStaysItsOwnRequestTests(unittest.TestCase):
     """Replacing one comic must not enrol the run it belongs to.
 

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 
-SCHEMA_VERSION = 80
+SCHEMA_VERSION = 81
 
 # What a merge let go of, said where the server's log can carry it (app.py
 # routes this logger into the structured log): the merged-away issue's rows
@@ -1744,6 +1744,36 @@ class CatalogStore:
                     recorded_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS vision_usage_at ON vision_usage(recorded_at);
+                -- Manga volumes the indexers carry and no catalog lists yet
+                -- (schema 81, the owner, 2026-11-15): Comic Vine knew two of
+                -- Star Wars: The Mandalorian: The Manga's four volumes, Kaiju
+                -- No. 8 three of sixteen. Each is offered to the admin, who
+                -- adds it or sets it aside; what was seen, and the decision,
+                -- are kept. An added volume is an issue of the run like any
+                -- other, and a catalog that lists it later merges onto it.
+                CREATE TABLE IF NOT EXISTS volume_suggestions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    series_run_id INTEGER NOT NULL REFERENCES series_runs(id) ON DELETE CASCADE,
+                    volume_number TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'dismissed')),
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    posted_at TEXT,
+                    publication_year INTEGER,
+                    evidence_json TEXT NOT NULL DEFAULT '[]',
+                    decided_at TEXT,
+                    decided_by INTEGER,
+                    issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL,
+                    UNIQUE(series_run_id, volume_number)
+                );
+                CREATE INDEX IF NOT EXISTS volume_suggestions_pending ON volume_suggestions(status, series_run_id);
+                -- When each manga run's series was last searched for volumes.
+                CREATE TABLE IF NOT EXISTS volume_scans (
+                    series_run_id INTEGER PRIMARY KEY REFERENCES series_runs(id) ON DELETE CASCADE,
+                    scanned_at TEXT NOT NULL,
+                    releases_seen INTEGER NOT NULL DEFAULT 0,
+                    error TEXT
+                );
                 CREATE TABLE IF NOT EXISTS cbz_conversions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_name TEXT NOT NULL,
@@ -5690,6 +5720,204 @@ class CatalogStore:
             for row in rows
         ]
 
+    @staticmethod
+    def _open_run_requests(connection: sqlite3.Connection, series_run_id: int) -> list[sqlite3.Row]:
+        """The open requests that take every issue a run gains: a followed run,
+        or a followed collection the run belongs to."""
+        return connection.execute(
+            """SELECT acquisition_requests.id
+               FROM acquisition_requests
+               WHERE acquisition_requests.status='open'
+                 -- A request that covers named issues -- one behind a
+                 -- replacement, or one comic pulled from Discover --
+                 -- covers those issues, not the run they belong to.
+                 -- Enrolled like a followed run, replacing one issue
+                 -- pulled every missing issue in the run, twice over
+                 -- when two replacements were open, and left the
+                 -- replacement unable to finish.
+                 AND acquisition_requests.coverage='run'
+                 AND (
+                   (acquisition_requests.scope_type='series'
+                    AND acquisition_requests.series_run_id=?)
+                   OR
+                   (acquisition_requests.scope_type='collection'
+                    AND EXISTS(
+                        SELECT 1 FROM series_family_memberships
+                        WHERE series_family_memberships.series_family_id=
+                              acquisition_requests.series_family_id
+                          AND series_family_memberships.series_run_id=?
+                    )
+                    AND (
+                        acquisition_requests.include_specials=1
+                        OR NOT EXISTS(
+                            SELECT 1 FROM story_arc_run_memberships
+                            JOIN story_arcs ON story_arcs.id=
+                                 story_arc_run_memberships.story_arc_id
+                            WHERE story_arc_run_memberships.series_run_id=?
+                              AND story_arcs.series_family_id=
+                                  acquisition_requests.series_family_id
+                              AND story_arcs.arc_type='specials'
+                        )
+                    ))
+               )""",
+            (series_run_id, series_run_id, series_run_id),
+        ).fetchall()
+
+    # -- Volumes found on the indexers (schema 81) -------------------------
+
+    def volume_scan_subject(self, series_run_id: int) -> dict[str, Any] | None:
+        """A run as a volume scan needs it: its title, year, publisher and format,
+        the volume numbers it already has, and the ones already decided."""
+        with self._connect() as connection:
+            run = connection.execute(
+                "SELECT id, canonical_title, start_year, publisher, format FROM series_runs WHERE id=?",
+                (int(series_run_id),),
+            ).fetchone()
+            if not run:
+                return None
+            numbers = [str(row["issue_number"]) for row in connection.execute(
+                "SELECT issue_number FROM issues WHERE series_run_id=?", (int(series_run_id),))]
+            decided = [str(row["volume_number"]) for row in connection.execute(
+                "SELECT volume_number FROM volume_suggestions WHERE series_run_id=? AND status!='pending'",
+                (int(series_run_id),))]
+        return {"id": int(run["id"]), "title": run["canonical_title"], "year": run["start_year"],
+                "publisher": run["publisher"], "format": run["format"], "numbers": numbers, "decided": decided}
+
+    def volume_scan_due(self, series_run_id: int, every_seconds: float, now: dt.datetime | None = None) -> bool:
+        now = now or dt.datetime.now(dt.timezone.utc)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT scanned_at FROM volume_scans WHERE series_run_id=?", (int(series_run_id),)).fetchone()
+        if not row:
+            return True
+        try:
+            last = dt.datetime.fromisoformat(str(row["scanned_at"]))
+        except ValueError:
+            return True
+        last = last if last.tzinfo else last.replace(tzinfo=dt.timezone.utc)
+        return (now - last).total_seconds() >= every_seconds
+
+    def note_volume_scan(self, series_run_id: int, releases_seen: int, error: str | None = None) -> None:
+        with self._write_lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO volume_scans(series_run_id, scanned_at, releases_seen, error) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(series_run_id) DO UPDATE SET scanned_at=excluded.scanned_at,
+                       releases_seen=excluded.releases_seen, error=excluded.error""",
+                (int(series_run_id), _utc_now(), int(releases_seen), error),
+            )
+
+    def record_volume_sightings(self, series_run_id: int, sightings: dict[str, list[dict[str, Any]]]) -> list[str]:
+        """Keep what a scan saw of volumes the run lacks. A volume already
+        decided is left as it was; a pending one has its evidence renewed.
+        Returns the volumes suggested for the first time."""
+        now = _utc_now()
+        new: list[str] = []
+        with self._write_lock, self._connect() as connection:
+            have = {str(row["issue_number"]).lstrip("0") or "0" for row in connection.execute(
+                "SELECT issue_number FROM issues WHERE series_run_id=?", (int(series_run_id),))}
+            for number, seen in sorted(sightings.items(), key=lambda item: int(item[0])):
+                if str(number).lstrip("0") in have or not seen:
+                    continue
+                posted = min((str(item.get("publishDate") or "")[:10] for item in seen if item.get("publishDate")),
+                             default=None)
+                years = [int(item["year"]) for item in seen if str(item.get("year") or "").isdigit()]
+                evidence = json.dumps(seen[:20], sort_keys=True)
+                existing = connection.execute(
+                    "SELECT id, status FROM volume_suggestions WHERE series_run_id=? AND volume_number=?",
+                    (int(series_run_id), str(number)),
+                ).fetchone()
+                if existing is None:
+                    connection.execute(
+                        """INSERT INTO volume_suggestions(series_run_id, volume_number, first_seen_at, last_seen_at,
+                               posted_at, publication_year, evidence_json) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (int(series_run_id), str(number), now, now, posted, min(years) if years else None, evidence),
+                    )
+                    new.append(str(number))
+                elif existing["status"] == "pending":
+                    connection.execute(
+                        """UPDATE volume_suggestions SET last_seen_at=?, evidence_json=?,
+                               posted_at=COALESCE(MIN(posted_at, ?), posted_at, ?),
+                               publication_year=COALESCE(publication_year, ?) WHERE id=?""",
+                        (now, evidence, posted, posted, min(years) if years else None, int(existing["id"])),
+                    )
+        return new
+
+    def volume_suggestions(self, series_run_id: int | None = None, status: str = "pending") -> list[dict[str, Any]]:
+        where, params = "WHERE volume_suggestions.status=?", [status]
+        if series_run_id is not None:
+            where += " AND volume_suggestions.series_run_id=?"
+            params.append(int(series_run_id))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT volume_suggestions.*, series_runs.canonical_title AS series_title
+                    FROM volume_suggestions JOIN series_runs ON series_runs.id=volume_suggestions.series_run_id
+                    {where} ORDER BY volume_suggestions.series_run_id, CAST(volume_suggestions.volume_number AS INTEGER)""",
+                params,
+            ).fetchall()
+        return [{
+            "id": int(row["id"]), "seriesRunId": int(row["series_run_id"]), "seriesTitle": row["series_title"],
+            "number": str(row["volume_number"]), "status": row["status"],
+            "firstSeenAt": row["first_seen_at"], "lastSeenAt": row["last_seen_at"],
+            "postedAt": row["posted_at"], "publicationYear": row["publication_year"],
+            "evidence": _load_json(row["evidence_json"], []), "decidedAt": row["decided_at"],
+            "issueId": row["issue_id"],
+        } for row in rows]
+
+    def accept_volume_suggestions(self, series_run_id: int, numbers: Iterable[str], user_id: int | None) -> list[str]:
+        """Add suggested volumes to the run, on the admin's word. Each becomes
+        an issue dated by its first posting -- so it reads as released and is
+        searched -- and joins the open requests that take the run's issues.
+        Returns the volumes added."""
+        wanted = {str(number) for number in numbers}
+        now = _utc_now()
+        added: list[str] = []
+        with self._write_lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM volume_suggestions WHERE series_run_id=? AND status='pending'",
+                (int(series_run_id),),
+            ).fetchall()
+            requests = self._open_run_requests(connection, int(series_run_id))
+            for row in rows:
+                number = str(row["volume_number"])
+                if number not in wanted:
+                    continue
+                connection.execute(
+                    """INSERT INTO issues(series_run_id, issue_number, title, publication_year, publication_date,
+                           created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(series_run_id, issue_number) DO NOTHING""",
+                    (int(series_run_id), number, None, row["publication_year"], row["posted_at"],
+                     now, now),
+                )
+                issue_id = int(connection.execute(
+                    "SELECT id FROM issues WHERE series_run_id=? AND issue_number=?",
+                    (int(series_run_id), number),
+                ).fetchone()["id"])
+                connection.executemany(
+                    "INSERT OR IGNORE INTO acquisition_request_issues(request_id, issue_id, created_at) VALUES (?, ?, ?)",
+                    [(int(request["id"]), issue_id, now) for request in requests],
+                )
+                connection.execute(
+                    """UPDATE volume_suggestions SET status='accepted', decided_at=?, decided_by=?, issue_id=?
+                       WHERE id=?""",
+                    (now, user_id, issue_id, int(row["id"])),
+                )
+                added.append(number)
+        return added
+
+    def dismiss_volume_suggestions(self, series_run_id: int, numbers: Iterable[str], user_id: int | None) -> list[str]:
+        """Stop offering these volumes. A catalog that lists one later still adds it."""
+        wanted = [str(number) for number in numbers]
+        if not wanted:
+            return []
+        with self._write_lock, self._connect() as connection:
+            placeholders = ",".join("?" for _ in wanted)
+            cursor = connection.execute(
+                f"""UPDATE volume_suggestions SET status='dismissed', decided_at=?, decided_by=?
+                    WHERE series_run_id=? AND status='pending' AND volume_number IN ({placeholders})""",
+                (_utc_now(), user_id, int(series_run_id), *wanted),
+            )
+        return wanted if cursor.rowcount else []
+
     def record_vision_usage(self, provider: str, model: str | None, purpose: str | None, *, overnight: bool,
                             input_tokens: int | None, output_tokens: int | None, cost_usd: float | None) -> None:
         with self._write_lock, self._connect() as connection:
@@ -7564,44 +7792,7 @@ class CatalogStore:
                         connection, issue_id, provider, str(entry["provider_id"]),
                         entry.get("api_url"), now,
                     )
-                active_requests = connection.execute(
-                    """SELECT acquisition_requests.id
-                       FROM acquisition_requests
-                       WHERE acquisition_requests.status='open'
-                         -- A request that covers named issues -- one behind a
-                         -- replacement, or one comic pulled from Discover --
-                         -- covers those issues, not the run they belong to.
-                         -- Enrolled like a followed run, replacing one issue
-                         -- pulled every missing issue in the run, twice over
-                         -- when two replacements were open, and left the
-                         -- replacement unable to finish.
-                         AND acquisition_requests.coverage='run'
-                         AND (
-                           (acquisition_requests.scope_type='series'
-                            AND acquisition_requests.series_run_id=?)
-                           OR
-                           (acquisition_requests.scope_type='collection'
-                            AND EXISTS(
-                                SELECT 1 FROM series_family_memberships
-                                WHERE series_family_memberships.series_family_id=
-                                      acquisition_requests.series_family_id
-                                  AND series_family_memberships.series_run_id=?
-                            )
-                            AND (
-                                acquisition_requests.include_specials=1
-                                OR NOT EXISTS(
-                                    SELECT 1 FROM story_arc_run_memberships
-                                    JOIN story_arcs ON story_arcs.id=
-                                         story_arc_run_memberships.story_arc_id
-                                    WHERE story_arc_run_memberships.series_run_id=?
-                                      AND story_arcs.series_family_id=
-                                          acquisition_requests.series_family_id
-                                      AND story_arcs.arc_type='specials'
-                                )
-                            ))
-                       )""",
-                    (series_run_id, series_run_id, series_run_id),
-                ).fetchall()
+                active_requests = self._open_run_requests(connection, series_run_id)
                 connection.executemany(
                     """INSERT OR IGNORE INTO acquisition_request_issues(
                            request_id, issue_id, created_at
@@ -7716,6 +7907,12 @@ class CatalogStore:
                       AND NOT EXISTS(
                           SELECT 1 FROM issue_metadata_overrides
                           WHERE issue_metadata_overrides.issue_id=issues.id
+                      )
+                      -- Nor a volume the admin added from the indexers: no
+                      -- catalog lists it yet, which is why it was added.
+                      AND NOT EXISTS(
+                          SELECT 1 FROM volume_suggestions
+                          WHERE volume_suggestions.issue_id=issues.id AND volume_suggestions.status='accepted'
                       )""",
                 (series_run_id,),
             ).rowcount or 0)
@@ -7846,6 +8043,10 @@ class CatalogStore:
                      AND NOT EXISTS(
                          SELECT 1 FROM issue_metadata_overrides
                          WHERE issue_metadata_overrides.issue_id=issues.id
+                     )
+                     AND NOT EXISTS(
+                         SELECT 1 FROM volume_suggestions
+                         WHERE volume_suggestions.issue_id=issues.id AND volume_suggestions.status='accepted'
                      )
                      AND NOT EXISTS(
                          SELECT 1 FROM issue_provider_ids AS other_provider
@@ -11375,6 +11576,10 @@ class CatalogStore:
                 else:
                     connection.execute("UPDATE issues SET series_run_id=?, updated_at=? WHERE id=?", (target_id, _utc_now(), issue["id"]))
             connection.execute("UPDATE editions SET series_run_id=?, updated_at=? WHERE series_run_id=?", (target_id, _utc_now(), source_id))
+            # Volumes offered or added from the indexers go with the run; one
+            # the target already has a decision on keeps the target's.
+            connection.execute("UPDATE OR IGNORE volume_suggestions SET series_run_id=? WHERE series_run_id=?",
+                               (target_id, source_id))
             # Coverage corrections describe the edition, not the accidental run
             # split. Re-home them and collapse exact duplicates.
             for override in connection.execute(

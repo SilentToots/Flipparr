@@ -8293,6 +8293,90 @@ class MangaVolumeTests(unittest.TestCase):
             {"title": "VIZ.Media.Sakamoto.Days.Vol.03.2022.HYBRiD.MANGA.eBook-PNLS", "categories": books}, job)
         self.assertLess(wrong, app.MANGA_GRAB_BAR, "an ebook that did not earn the bar is not lifted to it")
 
+    @staticmethod
+    def _mandalorian_postings():
+        """What the indexers answered for the Mandalorian manga, 2026-11-15."""
+        def post(title, indexer, size_mb, date="2026-03-11T08:00:00Z"):
+            return {"title": title, "indexer": indexer, "size": size_mb * 1_000_000, "publishDate": date,
+                    "categories": [{"id": 7030}]}
+        return [
+            post("VIZ.Media.Star.Wars.The.Mandalorian.Vol.01.2023.HYBRiD.MANGA", "NZBgeek", 134),
+            post("VIZ.Media.Star.Wars.The.Mandalorian.Vol.02.2024.HYBRiD.MANGA", "NZBgeek", 183),
+            post("VIZ.Media.Star.Wars.The.Mandalorian.Vol.03.2026.HYBRiD.MANGA.eBook-PNLS", "NZBFinder", 389),
+            post("VIZ.Media.Star.Wars.The.Mandalorian.Vol.03.2026.HYBRiD.MANGA.eBook-PNLS", "NZBFinder", 381),
+            post("VIZ.Media.Star.Wars.The.Mandalorian.Vol.04.2026.HYBRiD.MANGA", "NZBgeek", 314, "2026-09-01T00:00:00Z"),
+            post("VIZ.Media.Star.Wars.The.Mandalorian.Vol.04.2026.HYBRiD.MANGA.eBook-PNLS", "NZBFinder", 335),
+            post("VIZ.Media.Star.Wars.The.Mandalorian.Vol.05.2026.HYBRiD.MANGA", "NZBgeek", 300),
+            post("Star Wars - The Mandalorian v01-03 (2023-2026) (Digital) (1r0n)", "Nyaa.si", 1074),
+            post("Star Wars - The Mandalorian v06 (2026) (Digital) (1r0n)", "Nyaa.si", 300),
+            post("Star Wars - The Mandalorian v06 (2026) (Digital) (1r0n)", "Knaben", 300),
+            post("Star Wars - The Mandalorian - Grogu Adventures v07 (2026)", "NZBgeek", 200),
+            post("Star Wars - The Mandalorian - Grogu Adventures v07 (2026)", "NZBFinder", 200),
+            post("Mandalorian.S03.Vol.08.1080p.WEB-DL", "NZBgeek", 900),
+            post("Mandalorian.S03.Vol.08.1080p.WEB-DL", "NZBFinder", 900),
+        ]
+
+    def test_the_indexers_volumes_no_catalog_lists_are_offered(self):
+        """Comic Vine knew 2 of the Mandalorian manga's 4 volumes (2026-11-15)."""
+        store = Mock()
+        store.volume_scan_subject.return_value = {
+            "id": 7, "title": "Star Wars: The Mandalorian: The Manga", "year": 2023, "publisher": "Viz",
+            "format": "manga", "numbers": ["1", "2"], "decided": []}
+        store.record_volume_sightings.side_effect = lambda run, ready: sorted(ready, key=int)
+        store.list_users.return_value = [{"id": 1, "role": "admin", "disabled": False},
+                                         {"id": 2, "role": "reader", "disabled": False}]
+        with patch("app._enabled_acquisition_service", return_value={"url": "http://p", "apiKey": "k"}), \
+             patch("app._prowlarr_search", return_value=self._mandalorian_postings()) as search:
+            result = app.scan_indexer_volumes(7, store=store)
+        offered = store.record_volume_sightings.call_args.args[1]
+        self.assertEqual(sorted(offered, key=int), ["3", "4", "6"])
+        self.assertEqual(result["new"], ["3", "4", "6"])
+        # 5: one post. 1-3 pack: not one volume. Grogu Adventures: a spin-off.
+        # The S03 WEB-DL: a video. 1 and 2: the run has them.
+        asked = [call.args[1] for call in search.call_args_list]
+        self.assertEqual(asked, ["Star Wars The Mandalorian The Manga", "Star Wars The Mandalorian"])
+        self.assertTrue(all(call.kwargs["categories"] == app.MANGA_CATEGORIES for call in search.call_args_list))
+        self.assertEqual(len(offered["3"]), 2, "two uploads of one name at one indexer are two posts")
+        notified = [call.args[:3] for call in store.record_notification.call_args_list]
+        self.assertEqual(notified, [(1, "volumes_found", "volumes:7")], "the admin is told; a reader is not")
+        store.note_volume_scan.assert_called_once_with(7, len(self._mandalorian_postings()))
+
+    def test_volume_suggestions_are_the_admins(self):
+        import access_policy
+        for method in ("GET", "POST"):
+            self.assertEqual(access_policy.route_access(method, "/api/v1/series/7/volume-suggestions"),
+                             access_policy.ADMIN, "adding to the catalog is the admin's")
+
+    def test_a_decided_volume_or_a_comic_run_is_left_alone(self):
+        store = Mock()
+        store.volume_scan_subject.return_value = {
+            "id": 7, "title": "Star Wars: The Mandalorian: The Manga", "year": 2023, "publisher": "Viz",
+            "format": "manga", "numbers": ["1", "2"], "decided": ["3", "4", "6"]}
+        store.record_volume_sightings.side_effect = lambda run, ready: sorted(ready, key=int)
+        with patch("app._enabled_acquisition_service", return_value={"url": "http://p", "apiKey": "k"}), \
+             patch("app._prowlarr_search", return_value=self._mandalorian_postings()):
+            app.scan_indexer_volumes(7, store=store)
+        self.assertEqual(store.record_volume_sightings.call_args.args[1], {})
+        store.record_notification.assert_not_called()
+        comic = Mock()
+        comic.volume_scan_subject.return_value = {"id": 8, "title": "Saga", "format": "comic"}
+        with patch("app._prowlarr_search") as search:
+            self.assertEqual(app.scan_indexer_volumes(8, store=comic), {"skipped": "not a manga run"})
+        search.assert_not_called()
+
+    def test_the_volume_scan_runs_once_a_day_and_a_failure_waits_for_tomorrow(self):
+        store = Mock()
+        store.volume_scan_subject.return_value = {"id": 7, "title": "X", "format": "manga", "numbers": [], "decided": []}
+        store.volume_scan_due.return_value = False
+        with patch("app.scan_indexer_volumes") as scan:
+            app.scan_indexer_volumes_if_due(7, store)
+        scan.assert_not_called()
+        store.volume_scan_due.return_value = True
+        with patch("app.scan_indexer_volumes", side_effect=OSError("down")):
+            app.scan_indexer_volumes_if_due(7, store)
+        store.note_volume_scan.assert_called_once()
+        self.assertEqual(store.note_volume_scan.call_args.args[:2], (7, 0))
+
     def test_an_audiobook_is_not_a_manga_pack(self):
         job = {"seriesTitle": "The Apothecary Diaries", "seriesYear": 2021, "issueNumber": "2",
                "publisher": "Square Enix Manga & Books", "format": "manga"}
