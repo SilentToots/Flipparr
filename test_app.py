@@ -8259,6 +8259,47 @@ class MangaVolumeTests(unittest.TestCase):
         self.assertEqual([(row["publisher"], row["medium"]) for row in result["results"]],
                          [("Viz", "manga")])
 
+    def test_a_manga_named_the_manga_in_the_catalog_matches_the_publishers_posts(self):
+        """Star Wars: The Mandalorian: The Manga (2026-11-15): Viz posts it
+        without "The Manga", and the right volume scored 35."""
+        job = {"seriesTitle": "Star Wars: The Mandalorian: The Manga", "seriesYear": 2023, "issueNumber": "1",
+               "publicationYear": 2023, "publisher": "Viz", "format": "manga"}
+        score, reasons = app._release_candidate_score(
+            {"title": "VIZ.Media.Star.Wars.The.Mandalorian.Vol.01.2023.HYBRiD.MANGA"}, job)
+        self.assertGreaterEqual(score, app.MANGA_GRAB_BAR)
+        self.assertIn("Series title matches", reasons)
+        self.assertIn("Star Wars The Mandalorian v01", app._prowlarr_query_forms(job),
+                      "and the search asks for it as the publisher posts it")
+        self.assertEqual(app._manga_title_forms("Black Clover (Manga)"), ["Black Clover (Manga)", "Black Clover"])
+        self.assertEqual(app._manga_title_forms("Manga Dogs"), ["Manga Dogs"], "a title that is called manga keeps it")
+        spin_off, _ = app._release_candidate_score(
+            {"title": "Star Wars - The Mandalorian - Grogu Adventures v01 (2023)"}, job)
+        self.assertLess(spin_off, app.MANGA_GRAB_BAR, "only the suffix may be left off, nothing else")
+
+    def test_an_ebook_that_earned_a_grab_keeps_it_behind_a_comic_archive(self):
+        """Sakamoto Days v02 (2026-11-15): the year in Viz's post is not the
+        catalog's, and the ebook markdown took a right match from 90 to 80."""
+        job = {"seriesTitle": "Sakamoto Days", "seriesYear": 2022, "issueNumber": "2", "publicationYear": 2023,
+               "publisher": "Viz", "format": "manga"}
+        books = [{"id": 7030}]
+        ebook, reasons = app._release_candidate_score(
+            {"title": "VIZ.Media.Sakamoto.Days.Vol.02.2022.HYBRiD.MANGA.eBook-PNLS-FTP", "categories": books}, job)
+        archive, _ = app._release_candidate_score(
+            {"title": "Sakamoto Days v02 (2023) (Digital) (1r0n).cbz", "categories": books}, job)
+        self.assertEqual(ebook, app.MANGA_GRAB_BAR)
+        self.assertIn("Posted as an ebook, which may not be a comic archive", reasons)
+        self.assertGreater(archive, ebook, "a comic archive is still taken first")
+        wrong, _ = app._release_candidate_score(
+            {"title": "VIZ.Media.Sakamoto.Days.Vol.03.2022.HYBRiD.MANGA.eBook-PNLS", "categories": books}, job)
+        self.assertLess(wrong, app.MANGA_GRAB_BAR, "an ebook that did not earn the bar is not lifted to it")
+
+    def test_an_audiobook_is_not_a_manga_pack(self):
+        job = {"seriesTitle": "The Apothecary Diaries", "seriesYear": 2021, "issueNumber": "2",
+               "publisher": "Square Enix Manga & Books", "format": "manga"}
+        score, reasons = app._release_candidate_score(
+            {"title": "The Apothecary Diaries v01-02 [Audiobook] [Tantor Media] [Stick & Oak]"}, job)
+        self.assertEqual((score, reasons), (0, ["Not a comic-archive volume of this book"]))
+
     def manga_job(self, **kw):
         return {"seriesTitle": "Chainsaw Man", "seriesYear": 2020, "issueNumber": "18",
                 "publisher": "Viz", "format": "manga", **kw}

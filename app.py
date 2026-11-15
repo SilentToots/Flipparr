@@ -5361,8 +5361,12 @@ _MANGA_RANGE_BOUNDS = re.compile(
 _MANGA_CHAPTER = re.compile(r"(?<![A-Za-z0-9])(?:c|ch|chapter)\.?\s*\d{1,4}(?![\dA-Za-z])", re.I)
 # Not a comic-archive volume of this book: another format, an adult parody
 # named after the series, or an untranslated scan.
+# An audiobook of a light novel is numbered by volume too: "The Apothecary
+# Diaries v01-02 [Audiobook] [Tantor Media]" scored 77 as a pack of this
+# manga, above the bar a pack is offered at (2026-11-15).
 _MANGA_REFUSED = re.compile(
-    r"\b(?:mobi|azw3?|hentai|doujin(?:shi)?|porn|xxx|nsfw|erotic|parody|raw)\b", re.I
+    r"\b(?:mobi|azw3?|hentai|doujin(?:shi)?|porn|xxx|nsfw|erotic|parody|raw"
+    r"|audio-?books?|m4b|mp3|narrated|unabridged)\b", re.I
 )
 _MANGA_VIDEO = re.compile(
     r"\b(?:blu-?ray|bd(?:rip|remux)?|web-?(?:dl|rip)|hdtv|remux|x26[45]|h\s?26[45]|hevc|avc|av1"
@@ -5428,14 +5432,32 @@ def _manga_pack_range(title: Any) -> tuple[int, int] | None:
     return (first, last) if first < last else None
 
 
+# A catalog that knows a manga's English edition apart from a comic of the
+# same name says so in the title -- "Star Wars: The Mandalorian: The Manga",
+# "Black Clover (Manga)" -- and the publisher's own posts never do:
+# "VIZ.Media.Star.Wars.The.Mandalorian.Vol.01.2023.HYBRiD.MANGA". Matched
+# only whole, the right volume scored 35 against the 85 a grab needs, and
+# none of the four posted volumes was taken (the owner, 2026-11-15).
+_MANGA_TITLE_SUFFIX = re.compile(r"[\s:–—-]*(?:\(\s*manga\s*\)|\bthe\s+manga|\bmanga\s+edition)\s*$", re.I)
+
+
+def _manga_title_forms(title: Any) -> list[str]:
+    """A manga's catalog title, and the same without the catalog's "The Manga"."""
+    whole = str(title or "").strip()
+    bare = _MANGA_TITLE_SUFFIX.sub("", whole).strip()
+    return [whole] + ([bare] if bare and bare != whole else [])
+
+
 def _manga_names_series(lead: str, context: dict[str, Any]) -> bool:
     """Whether the text before a volume marker is this series, by equality:
     "One Piece - Heroines v01" is a spin-off, and a title that merely
-    contains the series is how specials got through."""
-    bare_wanted = normalized_title(_without_leading_article(context.get("seriesTitle")))
+    contains the series is how specials got through. The catalog's "The
+    Manga" may be left off (_manga_title_forms); nothing else may."""
+    wanted = {normalized_title(_without_leading_article(form))
+              for form in _manga_title_forms(context.get("seriesTitle"))} - {""}
     leads = {lead, _strip_manga_publisher(lead, context.get("publisher"))}
-    return bool(bare_wanted) and any(
-        normalized_title(_without_leading_article(re.sub(r"[-–—:]+", " ", form))) == bare_wanted
+    return bool(wanted) and any(
+        normalized_title(_without_leading_article(re.sub(r"[-–—:]+", " ", form))) in wanted
         for form in leads
     )
 
@@ -5794,6 +5816,11 @@ def convert_ebook_to_cbz(source: Path, destination: Path) -> int:
     return len(pages)
 
 
+# The score a release needs to be taken without a person (the release
+# search's "Strong match").
+MANGA_GRAB_BAR = 85
+
+
 def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tuple[int, list[str]]:
     """How well a release is one English volume of this manga.
 
@@ -5859,8 +5886,16 @@ def _manga_release_score(release: dict[str, Any], context: dict[str, Any]) -> tu
     # archive needs no conversion and cannot fail one, so it goes first; the
     # ebook stays eligible for when nothing else is posted, which for early
     # volumes is often the case.
+    # The markdown orders an ebook behind a comic archive; it must not take
+    # away a grab the match earned. Viz's eBook is often the only copy of an
+    # early volume, and Sakamoto Days v02 -- title and volume right, its year
+    # the posting's, not the catalog's -- fell from 90 to 80 and was never
+    # taken (2026-11-15). Earned, an ebook keeps at least the bar.
     if re.search(r"\b(?:ebook|hybrid|epub|pdf)\b", name, re.I) and not re.search(r"\bcb[zr]\b", name, re.I):
+        earned = score >= MANGA_GRAB_BAR
         score -= 10
+        if earned:
+            score = max(score, MANGA_GRAB_BAR)
         reasons.append("Posted as an ebook, which may not be a comic archive")
     return score, reasons
 
@@ -5910,6 +5945,12 @@ def _prowlarr_query_forms(context: dict[str, Any]) -> list[str]:
     # while the same words alone found it twice. An indexer matches words, so
     # the marks never help; only the plain wording is asked (owner, 2026-09-28).
     titles = [_plain_query_title(series) or series]
+    if context.get("format") == "manga":
+        # And as the publisher posts it: without the catalog's "The Manga".
+        for form in _manga_title_forms(series)[1:]:
+            plain = _plain_query_title(form) or form
+            if plain not in titles:
+                titles.append(plain)
     for title in list(titles):
         without_article = _without_leading_article(title)
         if without_article and without_article not in titles:
