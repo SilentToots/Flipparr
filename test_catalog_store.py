@@ -6878,3 +6878,70 @@ class StagingInUseTests(LibraryFixture):
             self.assertTrue(store.staging_in_use(5), "fulfilled, but an import of it is settling")
             self.assertTrue(store.staging_in_use(6), "cancelled, but a refusal is kept as evidence")
             self.assertFalse(store.staging_in_use(99), "no such job: nothing speaks for the folder")
+
+
+class StoreCloseTests(unittest.TestCase):
+    """close() from one thread while others query through the store: the
+    suites crashed once in eight runs of a segmentation fault this way
+    (2026-11-15), each test moving the database while a comic's package was
+    still being made in the background."""
+
+    def test_closing_while_threads_query_does_not_crash_them(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.sqlite3")
+            with store._connect() as connection:
+                connection.execute("CREATE TABLE race(x INTEGER, y TEXT)")
+                connection.executemany("INSERT INTO race VALUES (?, ?)", [(i, "v" * 40) for i in range(3000)])
+            stop = threading.Event()
+            failures: list[BaseException] = []
+
+            def query():
+                while not stop.is_set():
+                    try:
+                        with store._connect() as connection:
+                            for _row in connection.execute("SELECT x, y FROM race ORDER BY y, x"):
+                                pass
+                    except BaseException as exc:  # noqa: BLE001 -- any Python error is a failure here
+                        failures.append(exc)
+                        return
+
+            threads = [threading.Thread(target=query, daemon=True) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            # Unfixed, the image crashed within a second of this.
+            deadline = dt.datetime.now() + dt.timedelta(seconds=2)
+            while dt.datetime.now() < deadline:
+                store.close()
+            stop.set()
+            for thread in threads:
+                thread.join(10)
+            store.close()
+            self.assertEqual(failures, [])
+
+    def test_a_live_threads_connection_is_closed_by_that_thread(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = CatalogStore(Path(folder) / "catalog.sqlite3")
+            held = threading.Event()
+            release = threading.Event()
+            kept: list[sqlite3.Connection] = []
+
+            def hold():
+                with store._connect() as connection:
+                    kept.append(connection)
+                    held.set()
+                    release.wait(10)
+                    connection.execute("SELECT 1")   # still open while its transaction runs
+
+            thread = threading.Thread(target=hold)
+            thread.start()
+            held.wait(10)
+            store.close()
+            release.set()
+            thread.join(10)
+            with self.assertRaises(sqlite3.ProgrammingError):
+                kept[0].execute("SELECT 1")          # closed when its `with` ended
+            with store._connect() as connection:     # this thread's own: closed by close()
+                mine = connection
+            store.close()
+            with self.assertRaises(sqlite3.ProgrammingError):
+                mine.execute("SELECT 1")

@@ -295,6 +295,7 @@ class _ClosingConnection(sqlite3.Connection):
 
     _depth = 0
     _kept = False
+    _owner: threading.Thread | None = None
 
     def __enter__(self):
         self._depth += 1
@@ -843,14 +844,31 @@ class CatalogStore:
 
     def close(self) -> None:
         """Let go of every thread's connection: for a store being replaced
-        (the database moved), or a test's folder being removed."""
+        (the database moved), or a test's folder being removed.
+
+        A connection is closed here only when its thread is this one or has
+        ended. One a live thread keeps is let go instead: its thread closes it
+        when its current transaction ends (_ClosingConnection.__exit__) and
+        opens a new one next time. Closing it from here while its thread was
+        inside a statement freed that statement under it, and the process
+        died of a segmentation fault -- once in eight runs of the suites,
+        which move the database for every test while a comic's package or
+        fingerprints are still being worked out in the background (2026-11-15;
+        reproduced at once by threads querying while another closes). A
+        running server's database never moves, so it never got here.
+        """
         with self._connections_lock:
             connections, self._connections = self._connections, []
+        here = threading.current_thread()
         for connection in connections:
-            try:
-                connection.close()
-            except sqlite3.Error:
-                pass
+            owner = getattr(connection, "_owner", None)
+            if owner is None or owner is here or not owner.is_alive():
+                try:
+                    connection.close()
+                except sqlite3.Error:
+                    pass
+            else:
+                connection._kept = False
         self._thread = threading.local()
 
     # The tables the catalog (`catalog()` and what it calls) is read from. A
@@ -916,6 +934,7 @@ class CatalogStore:
             # Kept by its thread from here on; the migration's own connection,
             # opened before the journal mode is known, is let go.
             connection._kept = True
+            connection._owner = threading.current_thread()
             self._thread.connection = connection
             with self._connections_lock:
                 self._connections.append(connection)
