@@ -5481,6 +5481,7 @@ VOLUME_SCAN_EVERY_SECONDS = 24 * 60 * 60
 # Two postings of a volume -- two indexers, two releases or two uploads --
 # before it is offered: one mislabelled post is not a volume.
 VOLUME_SIGHTINGS_NEEDED = 2
+VOLUME_SCAN_SPACING_SECONDS = 30
 
 
 def scan_indexer_volumes(series_run_id: int, *, store: CatalogStore | None = None) -> dict[str, Any]:
@@ -5553,21 +5554,33 @@ def scan_indexer_volumes(series_run_id: int, *, store: CatalogStore | None = Non
     return {"releases": len(releases), "found": sorted(ready, key=int), "new": new}
 
 
-def scan_indexer_volumes_if_due(series_run_id: int, store: CatalogStore | None = None) -> None:
-    """The metadata worker's turn at a run: its volume scan, once a day."""
+def scan_indexer_volumes_if_due(series_run_id: int, store: CatalogStore | None = None) -> bool:
+    """The metadata worker's turn at a run: its volume scan, once a day.
+    True when it searched (or tried to)."""
     store = store or catalog_store()
     subject = store.volume_scan_subject(series_run_id)
     if not subject or subject.get("format") != "manga":
-        return
+        return False
     if not store.volume_scan_due(series_run_id, VOLUME_SCAN_EVERY_SECONDS):
-        return
+        return False
     try:
         scan_indexer_volumes(series_run_id, store=store)
-    except AcquisitionServiceOff:
-        return
+    except AcquisitionServiceOff as exc:
+        # Noted like a failure, so the idle worker does not ask again every
+        # few seconds; looked at again tomorrow.
+        store.note_volume_scan(series_run_id, 0, shown(exc) or "Prowlarr is off")
     except Exception as exc:  # noqa: BLE001 -- tried again tomorrow
         store.note_volume_scan(series_run_id, 0, shown(exc))
         log_event("volume_scan_failed", level="warning", series_run_id=series_run_id, error=shown(exc))
+    return True
+
+
+def scan_next_manga_volumes(store: CatalogStore | None = None) -> bool:
+    """The idle worker's volume scan: the followed manga run most overdue,
+    one just followed first. True when one was scanned."""
+    store = store or catalog_store()
+    series_run_id = store.next_volume_scan(VOLUME_SCAN_EVERY_SECONDS)
+    return series_run_id is not None and scan_indexer_volumes_if_due(series_run_id, store)
 
 
 def _manga_file_volume(name: Any) -> str | None:
@@ -18981,13 +18994,24 @@ def _metadata_enrichment_step(store: CatalogStore, stop_event: threading.Event) 
         return
     monitored = store.claim_monitored_series_refresh()
     if not monitored:
-        # Idle: fetch the weeks of releases ahead when that is due, then ask
+        # Idle: fetch the weeks of releases ahead when that is due, look on
+        # the indexers for one followed manga run's unlisted volumes, then ask
         # about one run whose files name no creator, so search by creator
         # finds it too.
         try:
             prefetch_release_weeks_if_due()
         except Exception as exc:  # noqa: BLE001 -- never the worker's end
             log_exception("release_prefetch_failed", exc, level="warning")
+        try:
+            scanned = scan_next_manga_volumes(store)
+        except Exception as exc:  # noqa: BLE001 -- never the worker's end
+            scanned = False
+            log_exception("volume_scan_failed", exc, level="warning")
+        if scanned:
+            # One run's search at a time, spaced, so a library of followed
+            # manga does not spend the indexers' daily API allowance at once.
+            stop_event.wait(VOLUME_SCAN_SPACING_SECONDS)
+            return
         try:
             synced = sync_next_run_creators(store)
         except Exception:

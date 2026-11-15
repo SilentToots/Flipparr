@@ -5704,6 +5704,23 @@ class VolumeSuggestionTests(unittest.TestCase):
             self.assertEqual(jobs, 1)
             self.assertEqual([item["number"] for item in store.volume_suggestions(series_id)], ["4"])
 
+    def test_a_run_just_followed_is_scanned_first_then_once_a_day(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, series_id = self._store(Path(folder))
+            with store._connect() as connection:
+                connection.execute("UPDATE series_runs SET format='manga' WHERE id=?", (series_id,))
+            day = 24 * 60 * 60
+            self.assertIsNone(store.next_volume_scan(day), "a manga run nobody follows is not searched")
+            store.create_acquisition_request("series", series_id, "issues")
+            self.assertEqual(store.next_volume_scan(day), series_id, "followed: looked at straight away")
+            store.note_volume_scan(series_id, 12)
+            self.assertIsNone(store.next_volume_scan(day))
+            later = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1, minutes=1)
+            self.assertEqual(store.next_volume_scan(day, now=later), series_id, "and again a day later")
+            with store._connect() as connection:
+                connection.execute("UPDATE series_runs SET format='comic' WHERE id=?", (series_id,))
+            self.assertIsNone(store.next_volume_scan(day, now=later), "a comic run is not scanned for volumes")
+
     def test_an_added_volume_outlives_a_rebuild_and_a_catalog_merges_onto_it(self):
         with tempfile.TemporaryDirectory() as folder:
             store, series_id = self._store(Path(folder))

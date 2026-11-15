@@ -5816,6 +5816,52 @@ class CatalogStore:
         last = last if last.tzinfo else last.replace(tzinfo=dt.timezone.utc)
         return (now - last).total_seconds() >= every_seconds
 
+    def next_volume_scan(self, every_seconds: float, now: dt.datetime | None = None) -> int | None:
+        """The followed manga run whose volume scan is most overdue: one never
+        scanned first -- a run just followed is looked at straight away, not
+        at its first catalog refresh a day later (the owner, 2026-11-15) --
+        then the longest since its last. Followed is what the monitored
+        refresh asks for: monitored, itself or by its collection, with an
+        open request."""
+        now = now or dt.datetime.now(dt.timezone.utc)
+        cutoff = (now - dt.timedelta(seconds=every_seconds)).isoformat()
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT series_runs.id FROM series_runs
+                   LEFT JOIN volume_scans ON volume_scans.series_run_id=series_runs.id
+                   WHERE series_runs.format='manga'
+                     AND (volume_scans.scanned_at IS NULL OR volume_scans.scanned_at<=?)
+                     AND (
+                         series_runs.monitoring_status='monitored'
+                         OR EXISTS(
+                             SELECT 1 FROM series_family_memberships
+                             JOIN series_families
+                               ON series_families.id=series_family_memberships.series_family_id
+                             WHERE series_family_memberships.series_run_id=series_runs.id
+                               AND series_families.monitoring_status='monitored'
+                         )
+                     )
+                     AND EXISTS(
+                         SELECT 1 FROM acquisition_requests
+                         WHERE acquisition_requests.status='open' AND (
+                             (acquisition_requests.scope_type='series'
+                              AND acquisition_requests.series_run_id=series_runs.id)
+                             OR
+                             (acquisition_requests.scope_type='collection'
+                              AND EXISTS(
+                                  SELECT 1 FROM series_family_memberships
+                                  WHERE series_family_memberships.series_run_id=series_runs.id
+                                    AND series_family_memberships.series_family_id=
+                                        acquisition_requests.series_family_id
+                              ))
+                         )
+                     )
+                   ORDER BY volume_scans.scanned_at IS NOT NULL, volume_scans.scanned_at, series_runs.id
+                   LIMIT 1""",
+                (cutoff,),
+            ).fetchone()
+        return int(row["id"]) if row else None
+
     def note_volume_scan(self, series_run_id: int, releases_seen: int, error: str | None = None) -> None:
         with self._write_lock, self._connect() as connection:
             connection.execute(

@@ -8377,6 +8377,23 @@ class MangaVolumeTests(unittest.TestCase):
         store.note_volume_scan.assert_called_once()
         self.assertEqual(store.note_volume_scan.call_args.args[:2], (7, 0))
 
+    def test_the_idle_worker_scans_the_followed_run_due_and_an_off_prowlarr_waits_a_day(self):
+        store = Mock()
+        store.next_volume_scan.return_value = None
+        with patch("app.scan_indexer_volumes") as scan:
+            self.assertFalse(app.scan_next_manga_volumes(store))
+        scan.assert_not_called()
+        store.next_volume_scan.return_value = 7
+        store.volume_scan_subject.return_value = {"id": 7, "title": "X", "format": "manga", "numbers": [], "decided": []}
+        store.volume_scan_due.return_value = True
+        with patch("app.scan_indexer_volumes") as scan:
+            self.assertTrue(app.scan_next_manga_volumes(store))
+        scan.assert_called_once_with(7, store=store)
+        with patch("app.scan_indexer_volumes", side_effect=app.AcquisitionServiceOff("Prowlarr is off")):
+            self.assertTrue(app.scan_next_manga_volumes(store))
+        self.assertEqual(store.note_volume_scan.call_args.args[:2], (7, 0),
+                         "noted, so the idle worker does not ask again every few seconds")
+
     def test_an_audiobook_is_not_a_manga_pack(self):
         job = {"seriesTitle": "The Apothecary Diaries", "seriesYear": 2021, "issueNumber": "2",
                "publisher": "Square Enix Manga & Books", "format": "manga"}
