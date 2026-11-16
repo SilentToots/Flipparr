@@ -13436,3 +13436,89 @@ class StagingSweepTests(unittest.TestCase):
             self.assertTrue(fresh.exists(), "finished an hour ago: left for a look")
             self.assertTrue(live.exists(), "spoken for: kept")
             self.assertTrue(stray.exists(), "not a job's folder: never touched")
+
+
+class SearchIntentTests(unittest.TestCase):
+    """"batman runs in 2026" found nothing: the whole sentence went to the
+    catalogs as a title (the owner, 2026-11-15)."""
+
+    EMPTY = {"keys": set(), "providerIds": set()}
+
+    def test_the_shared_cases_read_as_the_web_reads_them(self):
+        fixture = Path(__file__).parent / "v1-prototype" / "tests" / "fixtures" / "search-intent.json"
+        today = dt.date(2026, 11, 15)
+        for case in json.loads(fixture.read_text())["cases"]:
+            want = case["intent"]
+            if want and want["year"] == "now":
+                want = {**want, "year": 2026}
+            with self.subTest(query=case["query"]):
+                self.assertEqual(app.search_intent(case["query"], today=today), want)
+
+    @staticmethod
+    def _issue(series_id, name, began, number, store_date):
+        return {"id": hash((series_id, number)), "number": number, "store_date": store_date,
+                "image": f"https://static.metron.cloud/{series_id}-{number}.jpg",
+                "series": {"id": series_id, "name": name, "volume": 1, "year_began": began}}
+
+    def test_a_years_runs_come_from_its_issues_most_first_and_no_collected_editions(self):
+        page = {"next": None, "results": [
+            self._issue(1, "Batman", 2025, "5", "2026-01-14"),
+            self._issue(1, "Batman", 2025, "6", "2026-02-11"),
+            self._issue(2, "Absolute Batman", 2024, "15", "2026-01-21"),
+            self._issue(2, "Absolute Batman", 2024, "16", "2026-02-18"),
+            self._issue(2, "Absolute Batman", 2024, "17", "2026-03-18"),
+            self._issue(3, "Batman TPB", 2025, "2", "2026-03-01"),
+            self._issue(4, "Batman / Static: Beyond", 2026, "1", "2026-04-01"),
+        ]}
+        library = {"keys": set(), "providerIds": {"1"}}
+        with patch("app.fetch_provider_json", return_value=page) as fetch:
+            runs = app.metron_runs_in_year("batman", 2026, "token", library)
+        asked = urllib.parse.parse_qs(urllib.parse.urlparse(fetch.call_args.args[1]).query)
+        self.assertEqual(asked["series_name"], ["batman"])
+        self.assertEqual(asked["store_date_range_after"], ["2026-01-01"])
+        self.assertEqual(asked["store_date_range_before"], ["2026-12-31"])
+        self.assertEqual([(run["title"], run["issuesInYear"]) for run in runs],
+                         [("Absolute Batman", 3), ("Batman", 2), ("Batman / Static: Beyond", 1)])
+        self.assertEqual(runs[0]["matchedBy"], "3 in 2026")
+        self.assertEqual(runs[0]["cover"], "https://static.metron.cloud/2-17.jpg", "the latest issue's, linked")
+        self.assertTrue(runs[1]["inLibrary"], "the library's Batman (2025), by its Metron id")
+
+    def test_runs_in_a_year_search_the_title_and_say_what_was_asked(self):
+        config = {"metron": {"enabled": True, "token": "t"}}
+        with patch("app.load_provider_config", return_value=config), \
+                patch("app._discover_series_with", return_value={"results": [{"title": "Batman"}]}) as titles:
+            result = app.discover_series("batman runs in 2026", extended=True)
+        self.assertEqual(titles.call_args.args[:3], ("batman", "batman", 2026), "the title, not the sentence")
+        self.assertEqual(result["intent"], {"title": "batman", "year": 2026})
+        self.assertEqual(result["query"], "batman runs in 2026")
+
+    def test_words_that_found_nothing_are_searched_as_typed(self):
+        answers = [{"results": []}, {"results": [{"title": "Superman Comics from 1999"}]}]
+        with patch("app.load_provider_config", return_value={}), \
+                patch("app._discover_series_with", side_effect=answers) as titles:
+            result = app.discover_series("Superman Comics from 1999", extended=True)
+        self.assertEqual(titles.call_args.args[0], "Superman Comics from 1999")
+        self.assertNotIn("intent", result)
+
+    def test_the_years_runs_are_their_own_answer_and_say_when_metron_cannot(self):
+        config = {"metron": {"enabled": True, "token": "t"}}
+        with patch("app.load_provider_config", return_value=config), \
+                patch("app.metron_runs_in_year", return_value=[{"title": "Absolute Batman"}]) as runs:
+            answer = app.runs_in_year("batman", "2026")
+        self.assertEqual(runs.call_args.args[:3], ("batman", 2026, "t"))
+        self.assertEqual(answer, {"title": "batman", "year": 2026, "runs": [{"title": "Absolute Batman"}]})
+        with patch("app.load_provider_config", return_value={}):
+            unconnected = app.runs_in_year("batman", 2026)
+        self.assertIn("not connected", unconnected["error"])
+        self.assertIs(unconnected["metron"], False, "so the page offers no retry that cannot help")
+        with patch("app.load_provider_config", return_value=config), \
+                patch("app.metron_runs_in_year", side_effect=app.ProviderUnreachable("the service did not answer")):
+            self.assertIn("Metron could not list 2026", app.runs_in_year("batman", 2026)["error"])
+        with self.assertRaises(ValueError):
+            app.runs_in_year("batman", "soon")
+
+    def test_a_plain_search_is_unchanged(self):
+        with patch("app.load_provider_config", return_value={}), \
+                patch("app._discover_series_with", return_value={"results": []}) as titles:
+            app.discover_series("batman 2026", extended=True)
+        self.assertEqual(titles.call_args.args[:3], ("batman 2026", "batman", 2026))

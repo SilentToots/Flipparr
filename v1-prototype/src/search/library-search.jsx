@@ -6,7 +6,7 @@
 import { useMemo } from "react";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 import { DiscoverCover } from "../components/CoverArt.jsx";
-import { libraryRunMatches } from "../discover.js";
+import { libraryRunMatches, searchIntent } from "../discover.js";
 import { DEMO_SERIES, logicalCatalogSeries, searchQueryParts, useReadingLists } from "../library/LibraryView.jsx";
 import { arcMatches, arcYears, listCard } from "../reading-list.js";
 import { collectionMatches } from "../run-collections.js";
@@ -17,16 +17,20 @@ export function useLibraryMatches({ catalog, backendStatus, runCollections = [],
     () => logicalCatalogSeries(catalog, backendStatus === "offline" ? DEMO_SERIES : []),
     [catalog, backendStatus]);
   const savedArcs = useReadingLists(0, allSeries);
+  // "batman runs in 2026" is a search for Batman: its words and year are
+  // the catalogs' to answer (searchIntent), the library matches the title.
+  const intent = useMemo(() => searchIntent(liveQuery), [liveQuery]);
+  const text = intent ? intent.title : liveQuery;
   const libraryMatches = useMemo(() => {
-    if (!liveQuery) return [];
-    const parts = searchQueryParts(liveQuery);
+    if (!text) return [];
+    const parts = intent ? { title: intent.title, year: "" } : searchQueryParts(text);
     return allSeries.filter((item) => libraryRunMatches(item, parts));
-  }, [allSeries, liveQuery]);
+  }, [allSeries, text, intent]);
   // Collections and saved story arcs answer too: everything in the library.
-  const collectionMatchCards = useMemo(() => liveQuery
-    ? runCollections.filter((card) => card.runCount && collectionMatches(card, liveQuery)) : [], [runCollections, liveQuery]);
-  const arcMatchCards = useMemo(() => liveQuery
-    ? (savedArcs || []).map(listCard).filter((list) => arcMatches(list, liveQuery.toLowerCase())) : [], [savedArcs, liveQuery]);
+  const collectionMatchCards = useMemo(() => text
+    ? runCollections.filter((card) => card.runCount && collectionMatches(card, text)) : [], [runCollections, text]);
+  const arcMatchCards = useMemo(() => text
+    ? (savedArcs || []).map(listCard).filter((list) => arcMatches(list, text.toLowerCase())) : [], [savedArcs, text]);
   return { allSeries, libraryMatches, collectionMatchCards, arcMatchCards };
 }
 
@@ -45,7 +49,7 @@ export function LibraryMatches({ state, count, liveQuery, libraryMatches, collec
       {libraryMatches.map((series) => <LibraryMatchCard series={series} onOpen={onOpenRun} key={series.id} />)}
       {arcMatchCards.map((list) => <LibraryMatchCard series={{ id: `arc-${list.id}`, title: list.name, cover: list.cover, year: arcYears(list) || "Story arc" }}
         onOpen={() => onOpenList?.(list)} key={`arc-${list.id}`} />)}
-    </div> : <p className="discover-note">Nothing in your library matches “{liveQuery}”.</p>}
+    </div> : <p className="discover-note">Nothing in your library matches “{searchIntent(liveQuery)?.title || liveQuery}”.</p>}
   </>;
 }
 

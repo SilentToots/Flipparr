@@ -12988,6 +12988,128 @@ def _discovery_query_parts(query: str) -> tuple[str, str, int | None]:
     return cleaned, cleaned, None
 
 
+# How search reads a query that asks for the runs of a year: "batman runs in
+# 2026" went to the catalogs as a title and found nothing (the owner,
+# 2026-11-15). The words are taken off only when they clearly ask for a year
+# -- a preposition, a plural like "runs", "this year", or a leading "current"
+# -- so a title that ends in "Series" or begins with "New" is searched as it
+# is. The cases live in v1-prototype/tests/fixtures/search-intent.json, which
+# the web's searchIntent (discover.js) reads too.
+_INTENT_PREPOSITIONS = frozenset({"in", "from", "during", "for", "of", "since"})
+_INTENT_VERBS = frozenset({"active", "ongoing", "running", "out", "published", "released", "coming",
+                           "that", "are", "were", "being", "current", "currently"})
+_INTENT_NOUNS = frozenset({"runs", "run", "series", "comics", "comic", "books", "book", "titles", "title",
+                           "issues", "issue", "volumes", "manga"})
+# Nouns that are a title's own last word often enough ("The Animated Series",
+# "Chainsaw Man Manga") not to say "a year's runs" by themselves.
+_INTENT_TITLE_NOUNS = frozenset({"series", "manga", "run", "comic", "book", "title", "issue"})
+_INTENT_MODIFIERS = frozenset({"current", "currently", "active", "ongoing", "latest", "recent"})
+
+
+def search_intent(query: Any, today: dt.date | None = None) -> dict[str, Any] | None:
+    """{"title", "year"} when a query asks for a title's runs in a year, else None.
+
+    "batman runs in 2026", "batman comics from 2025", "current batman runs"
+    (this year). "batman 2026" stays a title and the year it began.
+    """
+    cleaned = re.sub(r"\s+", " ", str(query or "")).strip().rstrip("?!.").strip()
+    tokens = cleaned.split(" ") if cleaned else []
+    lower = [token.casefold() for token in tokens]
+    year: int | None = None
+    now = False
+    if lower and re.fullmatch(r"(?:19|20)\d{2}", lower[-1]):
+        year = int(lower[-1])
+        tokens, lower = tokens[:-1], lower[:-1]
+    elif lower[-2:] == ["this", "year"]:
+        now, tokens, lower = True, tokens[:-2], lower[:-2]
+    elif lower and lower[-1] in {"now", "currently"}:
+        now, tokens, lower = True, tokens[:-1], lower[:-1]
+    modifier = len(lower) > 1 and lower[0] in _INTENT_MODIFIERS
+    if modifier:
+        tokens, lower = tokens[1:], lower[1:]
+    stripped: set[str] = set()
+    filler = _INTENT_PREPOSITIONS | _INTENT_VERBS | _INTENT_NOUNS
+    while lower and lower[-1] in filler:
+        stripped.add(lower[-1])
+        tokens, lower = tokens[:-1], lower[:-1]
+    title = " ".join(tokens).strip(" :,-–—")
+    if len(title) < 2 or not re.search(r"[^\W\d_]", title):
+        return None
+    if year is not None or now:
+        if not stripped or stripped <= _INTENT_TITLE_NOUNS:
+            # "batman 2026", "Batman: The Animated Series 1992": a title and
+            # the year it began, as before.
+            if not modifier:
+                return None
+    elif not modifier:
+        return None
+    return {"title": title, "year": year or (today or dt.date.today()).year}
+
+
+# A name that is a collected edition of a run, not a run (Metron lists "Batman
+# TPB" and "Batman HC" as series of their own).
+_COLLECTED_SERIES_NAME = re.compile(r"\b(?:TPB|HC|Omnibus|Box Set|Compendium|Deluxe Edition)\b", re.I)
+
+
+def metron_runs_in_year(title: str, year: int, token: str, library: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """The runs named like `title` with issues on sale in `year`, most issues first.
+
+    Asked of issues, not series: Metron's series search finds only titles that
+    begin with the words and carries no end year, so it cannot say which runs
+    were out in a year -- "batman" never found Absolute Batman. Issues with a
+    store date in the year, grouped by their series, can (72 issues in 26 runs
+    for Batman in 2026, one request, 2026-11-15). Up to three pages.
+    """
+    params = {"series_name": title, "store_date_range_after": f"{int(year)}-01-01",
+              "store_date_range_before": f"{int(year)}-12-31"}
+    url: str | None = f"{METRON_API_BASE}/issue/?" + urllib.parse.urlencode(params)
+    runs: dict[str, dict[str, Any]] = {}
+    pages = 0
+    while url and pages < 3:
+        # A heavier ask than a title lookup -- a name inside every issue's
+        # series, over a year -- and asked while the title search and the
+        # creator lookups take Metron's turns: 12 s ran out for Spider-Man,
+        # which alone answers in about 4 (108 issues, 2026-11-15), and a
+        # timeout rests Metron for everyone.
+        payload = fetch_provider_json("metron", url, token, timeout=30.0)
+        pages += 1
+        for issue in payload.get("results") or []:
+            series = issue.get("series") or {}
+            name = str(series.get("name") or "").strip()
+            if not series.get("id") or not name or _COLLECTED_SERIES_NAME.search(name):
+                continue
+            run = runs.setdefault(str(series["id"]), {
+                "name": name, "yearBegan": _provider_year(series.get("year_began")), "count": 0,
+                "latest": "", "cover": None, "numbers": [],
+            })
+            run["count"] += 1
+            run["numbers"].append(str(issue.get("number") or ""))
+            stamp = str(issue.get("store_date") or "")
+            if stamp >= run["latest"]:
+                run["latest"] = stamp
+                run["cover"] = issue.get("image") or run["cover"]
+        url = payload.get("next")
+    view = library or _discovery_library_view()
+    rows = []
+    for series_id, run in runs.items():
+        title_text = re.sub(r"\s+\((?:19|20)\d{2}\)$", "", run["name"]).strip()
+        began = run["yearBegan"]
+        rows.append({
+            "provider": "metron", "providerName": "Metron", "providerSeriesId": series_id,
+            "providerIds": {"metron": series_id}, "title": title_text,
+            "yearBegan": began, "yearEnded": None, "yearLabel": str(began or "") or None,
+            "publisher": None, "issueCount": 0, "cover": run["cover"], "status": None,
+            "issuesInYear": run["count"], "latestStoreDate": run["latest"] or None,
+            "matchedBy": f"{run['count']} in {int(year)}",
+            "inLibrary": series_id in view["providerIds"]
+                         or (normalized_title(title_text), str(began or "")) in view["keys"],
+        })
+    # Most issues that year first; among equals, the one out most lately.
+    rows.sort(key=lambda row: row["latestStoreDate"] or "", reverse=True)
+    rows.sort(key=lambda row: -row["issuesInYear"])
+    return rows[:24]
+
+
 def discover_gcd_series(query: str, library: dict[str, Any] | None = None) -> dict[str, Any]:
     """Search publication runs that are not limited to the local library."""
     cleaned, title_query, year_hint = _discovery_query_parts(query)
@@ -13376,6 +13498,9 @@ def discover_series(query: str, *, extended: bool = False) -> dict[str, Any]:
     The rate limits in _PROVIDER_MIN_INTERVAL_SECONDS are per provider, so
     asking all of them costs the slowest one rather than the sum.
     """
+    intent = search_intent(query) if extended else None
+    if intent:
+        return _discover_runs_in_year(str(query), intent, extended)
     cleaned, title_query, year_hint = _discovery_query_parts(query)
     if len(cleaned) < 2:
         raise ValueError("Enter at least two characters to discover a series")
@@ -13389,6 +13514,62 @@ def discover_series(query: str, *, extended: bool = False) -> dict[str, Any]:
     finally:
         if turn:
             turn.release()
+
+
+def _discover_runs_in_year(query: str, intent: dict[str, Any], extended: bool) -> dict[str, Any]:
+    """A search for a title's runs in a year (search_intent): the title
+    searched as a title, ranked toward the year. Which runs had issues out
+    that year is its own request (/api/v1/discover/active, runs_in_year), so
+    each half shows when it arrives: together on Metron's pace they took 25 s
+    (2026-11-15). A title that is really the whole query -- the trimmed words
+    found nothing -- is searched as typed."""
+    title, year = intent["title"], int(intent["year"])
+    config = load_provider_config()
+    metron = config.get("metron") or {}
+    turn = _MetronTitleTurn() if metron.get("enabled") and metron.get("token") else None
+    try:
+        result = _discover_series_with(title, title, year, config, turn, extended)
+    finally:
+        if turn:
+            turn.release()
+    if not result.get("results"):
+        # The words were the title after all.
+        cleaned, title_query, year_hint = _discovery_query_parts(query)
+        turn = _MetronTitleTurn() if metron.get("enabled") and metron.get("token") else None
+        try:
+            return _discover_series_with(cleaned, title_query, year_hint, config, turn, extended)
+        finally:
+            if turn:
+                turn.release()
+    result["intent"] = {"title": title, "year": year}
+    result["query"] = query
+    return result
+
+
+def runs_in_year(title: Any, year: Any) -> dict[str, Any]:
+    """The runs named like `title` with issues out in `year`, for search's
+    "Runs With Issues in <year>" (metron_runs_in_year). Metron is the only
+    catalog that can say; without it the answer says so."""
+    title = re.sub(r"\s+", " ", str(title or "")).strip()
+    try:
+        year = int(year)
+    except (TypeError, ValueError):
+        raise ValueError("Give a four-digit year") from None
+    if len(title) < 2 or not 1900 <= year <= dt.date.today().year + 2:
+        raise ValueError("Give a title and a four-digit year")
+    answer: dict[str, Any] = {"title": title, "year": year, "runs": []}
+    metron = load_provider_config().get("metron") or {}
+    if not (metron.get("enabled") and metron.get("token")):
+        answer["error"] = "Which runs were out in a year comes from Metron, which is not connected."
+        answer["metron"] = False
+        return answer
+    # After the title search's own Metron request, which the reader waits on.
+    _after_metron_title_searches()
+    try:
+        answer["runs"] = metron_runs_in_year(title, year, str(metron["token"]))
+    except Exception as exc:  # noqa: BLE001 -- said on the page, with a retry
+        answer["error"] = f"Metron could not list {year}'s issues: {shown(exc)}"
+    return answer
 
 
 class _MetronTitleTurn:
@@ -21531,6 +21712,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(release_calendar())
             except Exception as exc:
                 self.send_json({"error": f"Release dates are temporarily unavailable: {shown(exc)}"}, 502)
+            return
+        if parsed_url.path == "/api/v1/discover/active":
+            asked = urllib.parse.parse_qs(parsed_url.query)
+            try:
+                self.send_json(runs_in_year(asked.get("title", [""])[0], asked.get("year", [""])[0]))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
             return
         if parsed_url.path == "/api/v1/discover":
             query = urllib.parse.parse_qs(parsed_url.query).get("query", [""])[0]

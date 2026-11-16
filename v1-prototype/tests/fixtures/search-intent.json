@@ -1,0 +1,28 @@
+{
+  "about": "How search reads a query that asks for runs in a year (the owner, 2026-11-15: \"batman runs in 2026\" found nothing). Read by test_app.py (app.search_intent) and tests/discover.test.mjs (searchIntent) so both halves read a query alike. year \"now\" is the current year; intent null means the query is searched as it is.",
+  "cases": [
+    { "query": "batman runs in 2026", "intent": { "title": "batman", "year": 2026 } },
+    { "query": "Batman runs in 2026", "intent": { "title": "Batman", "year": 2026 } },
+    { "query": "batman comics from 2025", "intent": { "title": "batman", "year": 2025 } },
+    { "query": "spider-man issues released in 2024", "intent": { "title": "spider-man", "year": 2024 } },
+    { "query": "x-men books out in 2026", "intent": { "title": "x-men", "year": 2026 } },
+    { "query": "superman series in 2026", "intent": { "title": "superman", "year": 2026 } },
+    { "query": "batman in 2026", "intent": { "title": "batman", "year": 2026 } },
+    { "query": "batman runs 2026", "intent": { "title": "batman", "year": 2026 } },
+    { "query": "batman runs this year", "intent": { "title": "batman", "year": "now" } },
+    { "query": "ongoing batman series", "intent": { "title": "batman", "year": "now" } },
+    { "query": "current batman runs", "intent": { "title": "batman", "year": "now" } },
+    { "query": "active Green Lantern comics", "intent": { "title": "Green Lantern", "year": "now" } },
+    { "query": "Absolute Batman runs active in 2026", "intent": { "title": "Absolute Batman", "year": 2026 } },
+    { "query": "batman", "intent": null },
+    { "query": "batman 2026", "intent": null },
+    { "query": "Batman (2016)", "intent": null },
+    { "query": "Batman: The Animated Series", "intent": null },
+    { "query": "Batman: The Animated Series 1992", "intent": null },
+    { "query": "New Mutants comics", "intent": null },
+    { "query": "The New 52 series", "intent": null },
+    { "query": "Saga", "intent": null },
+    { "query": "runs in 2026", "intent": null },
+    { "query": "comics from 2025", "intent": null }
+  ]
+}

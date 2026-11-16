@@ -5,8 +5,9 @@ import {
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds,
   runModes, completeRunToPull, issueLabel,
-  searchFold, libraryRunMatches, weeklyPicks,
+  searchFold, libraryRunMatches, weeklyPicks, searchIntent, fillRunsInYear,
 } from "../src/discover.js";
+import { readFileSync } from "node:fs";
 
 test("a manga volume reads as a volume, a comic issue as an issue", () => {
   assert.equal(issueLabel("18", "manga"), "Vol. 18");
@@ -319,3 +320,29 @@ test("a card with no art sinks: it reads as broken in a shelf", () => {
   assert.deepEqual(titles(result), ["Has art", "No art"]);
 });
 
+
+test("a query for a title's runs in a year reads as the server reads it", () => {
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/search-intent.json", import.meta.url), "utf8"));
+  const today = new Date(2026, 10, 15);
+  for (const { query, intent } of fixture.cases) {
+    const want = intent && intent.year === "now" ? { ...intent, year: 2026 } : intent;
+    assert.deepEqual(searchIntent(query, today), want, query);
+  }
+});
+
+test("a year's run takes its publisher and length from the title search, by Metron id", () => {
+  const runs = [
+    { provider: "metron", providerSeriesId: "2", providerIds: { metron: "2" }, title: "Absolute Batman",
+      publisher: null, issueCount: 0, cover: "https://static.metron.cloud/2-17.jpg", inLibrary: false },
+    { provider: "metron", providerSeriesId: "7", providerIds: { metron: "7" }, title: "Batman / Static: Beyond", inLibrary: false },
+  ];
+  const titles = [{ providerIds: { metron: "2", comic_vine: "9" }, publisher: "DC Comics", issueCount: 17,
+    cover: "https://comicvine.example/a.jpg", inLibrary: true }];
+  const [filled, untouched] = fillRunsInYear(runs, titles);
+  assert.equal(filled.publisher, "DC Comics");
+  assert.equal(filled.issueCount, 17);
+  assert.deepEqual(filled.providerIds, { metron: "2", comic_vine: "9" });
+  assert.equal(filled.cover, "https://static.metron.cloud/2-17.jpg", "its latest issue's cover stays");
+  assert.equal(filled.inLibrary, true);
+  assert.equal(untouched, runs[1]);
+});

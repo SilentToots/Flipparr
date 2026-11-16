@@ -328,3 +328,77 @@ export function runPreviewIds(item) {
   }
   return Object.fromEntries(Object.entries(ids).filter(([, value]) => value));
 }
+
+// How search reads a query that asks for a title's runs in a year: "batman
+// runs in 2026" went to the catalogs as a title and found nothing (the owner,
+// 2026-11-15). The server's search_intent (app.py) reads it the same way;
+// both are held to tests/fixtures/search-intent.json. Words come off only
+// when they clearly ask for a year, so "Batman: The Animated Series" and
+// "New Mutants" are searched as they are.
+const INTENT_PREPOSITIONS = new Set(["in", "from", "during", "for", "of", "since"]);
+const INTENT_VERBS = new Set(["active", "ongoing", "running", "out", "published", "released", "coming",
+  "that", "are", "were", "being", "current", "currently"]);
+const INTENT_NOUNS = new Set(["runs", "run", "series", "comics", "comic", "books", "book", "titles", "title",
+  "issues", "issue", "volumes", "manga"]);
+const INTENT_TITLE_NOUNS = new Set(["series", "manga", "run", "comic", "book", "title", "issue"]);
+const INTENT_MODIFIERS = new Set(["current", "currently", "active", "ongoing", "latest", "recent"]);
+
+/** `{ title, year }` when a query asks for a title's runs in a year, else null. */
+export function searchIntent(query, today = new Date()) {
+  const cleaned = String(query || "").replace(/\s+/g, " ").trim().replace(/[?!.]+$/, "").trim();
+  let tokens = cleaned ? cleaned.split(" ") : [];
+  let lower = tokens.map((token) => token.toLowerCase());
+  let year = null;
+  let now = false;
+  const last = lower[lower.length - 1];
+  if (last && /^(?:19|20)\d{2}$/.test(last)) {
+    year = Number(last);
+    tokens = tokens.slice(0, -1); lower = lower.slice(0, -1);
+  } else if (lower.slice(-2).join(" ") === "this year") {
+    now = true; tokens = tokens.slice(0, -2); lower = lower.slice(0, -2);
+  } else if (last === "now" || last === "currently") {
+    now = true; tokens = tokens.slice(0, -1); lower = lower.slice(0, -1);
+  }
+  const modifier = lower.length > 1 && INTENT_MODIFIERS.has(lower[0]);
+  if (modifier) { tokens = tokens.slice(1); lower = lower.slice(1); }
+  const stripped = new Set();
+  const filler = (word) => INTENT_PREPOSITIONS.has(word) || INTENT_VERBS.has(word) || INTENT_NOUNS.has(word);
+  while (lower.length && filler(lower[lower.length - 1])) {
+    stripped.add(lower[lower.length - 1]);
+    tokens = tokens.slice(0, -1); lower = lower.slice(0, -1);
+  }
+  const title = tokens.join(" ").replace(/^[\s:,\-–—]+|[\s:,\-–—]+$/g, "");
+  if (title.length < 2 || !/\p{L}/u.test(title)) return null;
+  if (year !== null || now) {
+    const onlyTitleNouns = [...stripped].every((word) => INTENT_TITLE_NOUNS.has(word));
+    if ((!stripped.size || onlyTitleNouns) && !modifier) return null;
+  } else if (!modifier) {
+    return null;
+  }
+  return { title, year: year ?? today.getFullYear() };
+}
+
+/**
+ * A year's runs (found from Metron's issues, which name no publisher and no
+ * length) with what the title search knows of the same run, matched by
+ * Metron id: its publisher, length and status, the other catalogs' ids, and
+ * whether the library has it under another catalog's id.
+ */
+export function fillRunsInYear(runs = [], titleResults = []) {
+  const byMetron = new Map();
+  for (const row of titleResults || []) {
+    const id = String(row?.providerIds?.metron || "");
+    if (id) byMetron.set(id, row);
+  }
+  return (runs || []).map((run) => {
+    const known = byMetron.get(String(run.providerSeriesId));
+    if (!known) return run;
+    const filled = { ...run, providerIds: { ...(known.providerIds || {}), ...(run.providerIds || {}) } };
+    for (const key of ["publisher", "issueCount", "status", "yearEnded", "yearLabel", "medium"]) {
+      if (!filled[key] && known[key]) filled[key] = known[key];
+    }
+    filled.cover = filled.cover || known.cover;
+    filled.inLibrary = Boolean(run.inLibrary || known.inLibrary);
+    return filled;
+  });
+}

@@ -84,7 +84,7 @@ import {
   pullState, issueKey, PULL_STATES, PULL_LABELS, READER_PULL_LABELS, shelfState, splitSearchResults,
   providerProgress, libraryMatchState,
   selectableIssue, releasedToPull, runPullSummary, runPreviewIds, weeklyPicks,
-  runModes, completeRunToPull, issueLabel } from "./discover.js";
+  runModes, completeRunToPull, issueLabel, searchIntent, fillRunsInYear } from "./discover.js";
 import { requestKey, waitingKeys, runRequested, requestScope, adminQueue, isFollow, swipeDecision, ratingTone, UNDO_MS, REQUEST_STATE_LABELS, ADMIN_STATE_LABELS } from "./member-requests.js";
 import { ViewerContext, useViewer } from "./viewer.js";
 import { CoverArt, DiscoverCover, SeriesCover } from "./components/CoverArt.jsx";
@@ -636,6 +636,41 @@ function NewRunCard({ item, state, onPull, onOpen }) {
   </article>;
 }
 
+// "batman runs in 2026": the runs with issues out that year, most first,
+// found from Metron's issues (app.py, metron_runs_in_year) -- the title search
+// below cannot say which runs were out in a year. The runs already in the
+// library are in "In Your Library"; this lists the rest, as New Matches does.
+function RunsInYear({ answer, titleResults, stateOf, onPull, onOpen, onRetry }) {
+  const runs = useMemo(() => fillRunsInYear(answer.runs, titleResults), [answer.runs, titleResults]);
+  const { fresh, ownedCount } = splitSearchResults(runs);
+  const { year, state } = answer;
+  return <section className="discover-results" aria-label={`Runs with issues in ${year}`}>
+    <header>
+      <h2>{state === "loading" || answer.error ? null : <>{fresh.length} </>}<span>{fresh.length === 1 ? `Run With Issues in ${year}` : `Runs With Issues in ${year}`}</span></h2>
+      {state === "loading" ? <p className="provider-progress" role="status" aria-live="polite"><span className="provider-searching">Metron searching…</span></p> : null}
+    </header>
+    {state === "loading" ? <div className="new-run-grid" role="status" aria-busy="true">
+      <span className="sr-only">Finding the runs out in {year}</span>
+      {[0, 1, 2, 3, 4].map((item) => <NewRunCardSkeleton key={item} />)}
+    </div> : fresh.length ? <>
+      <p className="discover-note">Runs with “{answer.title}” in the name and issues on sale in {year}, most issues first.{ownedCount ? ` ${ownedCount} more ${ownedCount === 1 ? "is" : "are"} in your library.` : ""}</p>
+      <div className="new-run-grid">
+        {fresh.map((item) => <NewRunCard item={item} state={stateOf(item)} onPull={onPull} onOpen={onOpen}
+          key={`${item.provider}-${item.providerSeriesId}`} />)}
+      </div>
+    </> : <div className="shelf-message">
+      <MagnifyingGlass size={18} />
+      <span>
+        <strong>{answer.error ? `Runs out in ${year} could not be listed`
+          : ownedCount ? `All ${ownedCount} run${ownedCount === 1 ? "" : "s"} with issues in ${year} ${ownedCount === 1 ? "is" : "are"} in your library`
+          : `No run named “${answer.title}” had issues in ${year}`}</strong>
+        <small>{answer.error || "The matches below are every run of that name."}</small>
+      </span>
+      {answer.error && answer.metron !== false ? <button type="button" onClick={onRetry}>Try again</button> : null}
+    </div>}
+  </section>;
+}
+
 function NewRunCardSkeleton() {
   return <div className="new-run-card new-run-skeleton" aria-hidden="true">
     <span className="discover-cover new-run-art" />
@@ -844,6 +879,9 @@ function DiscoverView({
   const [drawer, setDrawer] = useState(null);
   // Story arcs matching the search, asked beside it so runs are not held up.
   const [arcs, setArcs] = useState([]);
+  // "batman runs in 2026": the runs with issues out that year, asked beside
+  // the title search so each shows when it arrives (RunsInYear).
+  const [yearRuns, setYearRuns] = useState(null);
   const latestQuery = useRef(query);
   latestQuery.current = query;
   const searching = Boolean(query);
@@ -879,9 +917,20 @@ function DiscoverView({
     loadReleases();
   }, [searching, mode, backendStatus]);
 
+  function loadYearRuns(cleaned) {
+    const intent = searchIntent(cleaned);
+    if (!intent) { setYearRuns(null); return; }
+    const current = () => cleaned === String(latestQuery.current || "").trim();
+    setYearRuns({ state: "loading", title: intent.title, year: intent.year, runs: [] });
+    apiRequest(`/api/v1/discover/active?title=${encodeURIComponent(intent.title)}&year=${intent.year}`)
+      .then((answer) => { if (current()) setYearRuns({ state: "done", ...answer, runs: answer.runs || [] }); })
+      .catch((error) => { if (current()) setYearRuns({ state: "done", ...intent, runs: [], error: error.message }); });
+  }
+
   async function searchProviders(value = query) {
     const cleaned = String(value || "").trim();
     if (cleaned.length < 2 || backendStatus === "offline") {
+      setYearRuns(null);
       setDiscovery({ state: "done", results: [], providersChecked: [], providersAnswered: [], fallbacks: [],
         error: backendStatus === "offline" ? "Library service is unavailable" : "" });
       return;
@@ -891,6 +940,7 @@ function DiscoverView({
     apiRequest(`/api/v1/discover/arcs?query=${encodeURIComponent(cleaned)}`)
       .then((result) => { if (cleaned === String(latestQuery.current || "").trim()) setArcs(result.arcs || []); })
       .catch(() => setArcs([]));
+    loadYearRuns(cleaned);
     try {
       // One answer: titles, a creator's runs and a publisher's, ranked together.
       const result = await apiRequest(`/api/v1/discover?query=${encodeURIComponent(cleaned)}`);
@@ -1025,6 +1075,12 @@ function DiscoverView({
       </button> : null}
 
       {catalogsAllowed && submittedMatches ? <>
+
+      {yearRuns ? <RunsInYear answer={yearRuns} titleResults={discovery.results}
+        stateOf={(item) => pulled[`run:${item.provider}-${item.providerSeriesId}`]
+          || (runRequested(waiting, item.provider, item.providerSeriesId) ? PULL_STATES.requested : PULL_STATES.idle)}
+        onPull={pullRun} onOpen={(run) => { remember("run", run); openCatalogRun(run); }}
+        onRetry={() => loadYearRuns(String(query || "").trim())} /> : null}
 
       <section className="discover-results" aria-label="New matches">
         <header>

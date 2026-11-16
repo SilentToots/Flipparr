@@ -1976,6 +1976,7 @@ NOT_ADMIN = {
     ("GET", "/api/v1/discover/arcs"): "reader",
     ("GET", "/api/v1/discover/arc-suggestions"): "reader",
     ("GET", "/api/v1/discover/arc"): "reader",
+    ("GET", "/api/v1/discover/active"): "reader",
     ("GET", "/api/v1/member-requests"): "reader",
     ("POST", "/api/v1/member-requests"): "reader",
     ("POST", "/api/v1/member-requests/1/cancel"): "reader",
