@@ -155,6 +155,20 @@ You lose manual corrections, aliases and request history — not files.
 
 ### Unreleased
 
+- **Flipparr View's first screen no longer starts under its tabs.** On about
+  one cold launch in three the page's top padding was the header's height
+  without the safe-area inset (the web view reports the inset a moment after
+  first layout, and the header's size was watched by its content box, which
+  the padding does not change); the first shelf sat under the tab bar. It
+  watches the border box now: 12 of 12 cold launches right.
+- **A comic read panel by panel on its first page is "Continue", not
+  "Begin".** The run page and the Read button counted a place on page 1 as
+  never started while Keep Reading had it at 25%; a panel past the first now
+  counts (the server's reading target; needs the server).
+- **The reader names the comic** -- "Pepper&Carrot #3 · The Secret
+  Ingredients", "Chainsaw Man Vol. 18" -- not its file; a file no issue is
+  known for keeps its name.
+
 ### 0.3.0 — Manga volumes, searches in plain words, and catalogs that go away
 
 **Schema:** 81 (from 76). Upgrading keeps the catalog as it was, as

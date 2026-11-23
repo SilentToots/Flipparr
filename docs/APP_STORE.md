@@ -163,10 +163,11 @@ the questionnaire does not fit.
 `ITSAppUsesNonExemptEncryption` is `false` in `ios/App/App/Info.plist`: the
 app uses only the system's HTTPS. No question per build.
 
-## Known issues to decide on before submitting
+## Known issues found while taking the screenshots
 
-Found while taking the screenshots (build of f251034, iPhone 17 Pro Max
-simulator):
+Found in the build of f251034 (iPhone 17 Pro Max simulator). **1-3 fixed
+2026-11-23** (docs/RELEASE.md, Unreleased); 2 needs the server deployed as
+well as the app:
 
 1. **Home screen shelf under the tabs, intermittently.** On some cold launches
    the first shelf on Comics › Recommended starts about 62 pt higher than it

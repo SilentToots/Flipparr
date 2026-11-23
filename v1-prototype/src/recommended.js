@@ -8,6 +8,8 @@
 //
 // Pure: the tab in App.jsx draws them.
 
+import { issueLabel } from "./discover.js";
+
 export const SHELF_SIZE = 20;
 
 const day = (value) => String(value || "").slice(0, 10);
@@ -40,6 +42,23 @@ export function issueOfFile(run, fileId, issueNumber) {
   const number = issueNumber ?? (run?.fileDetails || []).find((file) => String(file.id) === String(fileId))?.issueNumber;
   if (number === undefined || number === null || number === "") return null;
   return issues.find((issue) => issue.fileId && numberKey(issue.number) === numberKey(number)) || null;
+}
+
+/**
+ * A comic as the reader's bar and the finish drawer name it: "Pepper&Carrot
+ * #3 · The Secret Ingredients", "Chainsaw Man Vol. 18" -- the run and the
+ * number, then the issue's own title when it has one that is not just its
+ * number. The reader used to show the file's name ("Pepper&Carrot 003
+ * (2014).cbz", 2026-11-23). A file no issue is known for keeps its name.
+ */
+export function comicTitle(run, issue, filename = "") {
+  if (!run || !issue) return filename || run?.title || "Reading";
+  const label = issue.number !== undefined && issue.number !== null && issue.number !== ""
+    ? issueLabel(issue.number, run.medium) : "";
+  const named = [run.title, label].filter(Boolean).join(" ");
+  const own = String(issue.title || "").trim();
+  const ownIsNumber = !own || own === label || /^(?:#|vol\.?\s*|issue\s*)?\d+(?:\.\d+)?$/i.test(own);
+  return ownIsNumber ? named : `${named} · ${own}`;
 }
 
 /** An issue as a shelf card. */

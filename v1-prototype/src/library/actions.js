@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api.js";
 import { EMPTY_ENTRIES, withEntry } from "../reading-list-tab.js";
-import { issueOfFile } from "../recommended.js";
+import { comicTitle, issueOfFile } from "../recommended.js";
 
 const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
@@ -34,10 +34,11 @@ export async function readableFile(target) {
 export function readingContext(catalog, fileId) {
   if (!fileId) return { series: null, title: "", issue: null, next: null };
   const series = (catalog?.series || []).find((item) => (item.fileDetails || []).some((file) => String(file.id) === String(fileId))) || null;
-  const title = (series?.fileDetails || []).find((file) => String(file.id) === String(fileId))?.filename || series?.title || "Reading";
+  const filename = (series?.fileDetails || []).find((file) => String(file.id) === String(fileId))?.filename || "";
   const issues = series?.issues || [];
   // The issue, even when this is a second copy of it (issueOfFile).
   const issue = issueOfFile(series, fileId) || null;
+  const title = comicTitle(series, issue, filename);
   const next = issue ? issues.slice(issues.indexOf(issue) + 1).find((item) => item.fileId) || null : null;
   return { series, title, issue, next };
 }

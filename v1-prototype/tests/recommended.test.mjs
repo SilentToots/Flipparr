@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  keepReading, recentlyReleased, recentlyAddedIssues, recentlyAddedRuns, formatDay, localDay, ownedIssues, issueOfFile,
+  keepReading, recentlyReleased, recentlyAddedIssues, recentlyAddedRuns, formatDay, localDay, ownedIssues, issueOfFile, comicTitle,
 } from "../src/recommended.js";
 
 const series = [
@@ -75,4 +75,15 @@ test("a second copy of an issue is still that issue: its cover, rating and next"
   assert.equal(card.fileId, "602", "it still opens the copy named");
   assert.equal(issueOfFile(run, "602")?.id, 441, "found by the file's own number when none is given");
   assert.equal(issueOfFile(run, "999"), null);
+});
+
+test("the reader names the comic, not its file", () => {
+  const run = { title: "Pepper&Carrot", medium: "comic" };
+  assert.equal(comicTitle(run, { number: "3", title: "The Secret Ingredients" }, "Pepper&Carrot 003 (2014).cbz"),
+    "Pepper&Carrot #3 · The Secret Ingredients");
+  assert.equal(comicTitle(run, { number: "7", title: "" }), "Pepper&Carrot #7");
+  assert.equal(comicTitle(run, { number: "7", title: "Issue 7" }), "Pepper&Carrot #7", "a title that is only its number");
+  assert.equal(comicTitle({ title: "Chainsaw Man", medium: "manga" }, { number: "18", title: "Vol. 18" }), "Chainsaw Man Vol. 18");
+  assert.equal(comicTitle(run, null, "Loose file.cbz"), "Loose file.cbz", "no issue known: its file name");
+  assert.equal(comicTitle(null, null, ""), "Reading");
 });
