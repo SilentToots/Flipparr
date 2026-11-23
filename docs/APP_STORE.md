@@ -78,8 +78,11 @@ comic's art). Taken in the simulator from the build of f251034 against a
 local copy of the demo server's library; status bar at 9:41, full battery.
 PNG, RGB, no transparency.
 
-**iPhone 6.9" (1320 × 2868)** -- App Store Connect scales these for the
-smaller iPhones:
+**iPhone 6.1"/6.3" (1206 × 2622)** -- `app-store/iphone-6.3/`, the size App
+Store Connect asks for (it accepts 1179 × 2556 or 1206 × 2622 there; it
+refused the 1320 × 2868 set, 2026-11-23). Made from the 6.9" captures below
+with a Lanczos downscale: the shapes differ by 0.06%. The 6.9" originals stay
+in `app-store/iphone-6.9/` for a 6.9" slot if one is offered:
 
 1. `01-home.png` -- Comics, Recommended: Keep Reading at 25 %, Downloaded, the continue bar.
 2. `02-panel-view.png` -- panel view, panel 2 of 3, the rest of the page dimmed.
