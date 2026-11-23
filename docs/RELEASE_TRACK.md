@@ -363,10 +363,12 @@ what it keeps on a device is `docs/PRIVACY.md`.
   reading-list changes with `at`, offline profile switching, the
   reconnect check, run, arc and collection downloads, and Settings. The
   server side is in production since `b602510` (schema 68).
-- **Evidence still owed:** the iPad checklist in `docs/INSTALL_PROOFS.md`
-  on a TestFlight build (build 20261116005122, of f177b1e, uploaded
-  2026-11-16; the owner reports it looking good, the checklist not yet
-  recorded).
+- **iPad checklist waived by the owner (2026-11-23):** instead of the
+  checklist in `docs/INSTALL_PROOFS.md`, the owner accepts about a month of
+  everyday use of the TestFlight builds on an iPad and an iPad mini with
+  nothing found ("everything has been good"). The checklist stays in
+  INSTALL_PROOFS.md for a later release; what it covers was used, not
+  stepped through.
 - **App Review's demo server (2026-11-23):** a separate Flipparr 0.3.0 on
   the owner's NAS (`flipparr-demo`, its own config, cache and port), public
   at `https://flipparr-demo.silenttoots.com` through a Cloudflare tunnel
