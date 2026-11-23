@@ -587,7 +587,7 @@ This is exercised, with real containers, by `tools/install_drill.py` (see
 ### Upgrading and rolling back
 
 `compose.yaml` names the release it shipped with
-(`ghcr.io/silenttoots/flipparr:0.2.0`). To upgrade, set `FLIPPARR_IMAGE` in
+(`ghcr.io/silenttoots/flipparr:0.3.0`). To upgrade, set `FLIPPARR_IMAGE` in
 `.env` to the new tag (or take the new `compose.yaml`), then:
 
 ```bash

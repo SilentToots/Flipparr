@@ -155,8 +155,71 @@ You lose manual corrections, aliases and request history — not files.
 
 ### Unreleased
 
-**Schema:** 80 (adds `overnight_panel_runs`, `duplicate_resolutions.state`,
-`revoked_sessions`, `vision_usage`). No change on disk.
+### 0.3.0 — Manga volumes, searches in plain words, and catalogs that go away
+
+**Schema:** 81 (from 76). Upgrading keeps the catalog as it was, as
+`flipparr.db.pre-v81`, beside it; rolling back to 0.2.0 means restoring that
+copy or a `/config` backup, as 0.2.0 refuses a newer catalog. Added:
+`overnight_panel_runs`, `duplicate_resolutions.state`, `revoked_sessions`
+(a signed-out device's session), `vision_usage` (each vision call's tokens
+and cost), `volume_suggestions` and `volume_scans` (manga volumes the
+indexers carry that no catalog lists, and when each run was last looked
+for). **The compose file adds a `/cache` volume** (below); an install that
+keeps its own compose file should add it. Nothing on disk changes on
+upgrade.
+
+- **Search understands plain words.** "batman runs in 2026", "comics from
+  2025", "current spider-man runs" and "batman this year" search the title,
+  and a new section, *Runs With Issues in 2026*, lists the runs with issues
+  on sale that year, most issues first, from Metron's issues -- which a
+  title search cannot say, and which finds runs whose names only contain the
+  title (Absolute Batman, team-ups, minis). It loads beside the title search,
+  each section when its answer comes. "Batman: The Animated Series", "New
+  Mutants" and "batman 2026" are searched as before. Needs Metron; without it
+  the section says so.
+- **Manga volumes the catalogs do not list.** Once a day -- and straight away
+  when a manga run is followed -- the indexers are searched for the run's
+  single volumes that no catalog lists yet; a volume posted at least twice,
+  each scoring as a grab would, is offered to the admin in the run's drawer
+  and the bell. *Add* makes it a volume of the run, searched and downloaded
+  with it; *Not now* stops offering it. Nothing is added unasked. On the
+  owner's library, 43 volumes across 14 series were on the indexers and in no
+  catalog (Star Wars: The Mandalorian: The Manga was listed as two of four).
+- **Manga matching:** a catalog title ending "The Manga" matches the
+  publisher's posts without it; an ebook that scored enough to be grabbed is
+  no longer pushed under the bar by preferring comic archives; audiobooks
+  are refused.
+- **A catalog that stops answering rests.** Metron or Comic Vine timing out
+  or failing is let be for a minute, doubling to fifteen, and what it said
+  last (kept up to 30 days) stands in for it -- before, every screen asked
+  again and failed again. The next three release weeks are fetched ahead
+  twice a day, so Discover's shelves have them when Metron is down; a week
+  that cannot be had says so in words.
+- **Covers in search again:** Comic Vine's search began answering a "Blank!"
+  picture for every run (2026-10-21); covers come from its volumes instead,
+  and a run no catalog has a cover for takes its first issue's from Metron
+  (linked from Metron, as every cover is, never stored).
+- **Settings › About credits Metron's data** under its licence (CC BY-SA 4.0),
+  as Metron asks.
+- **Security:** the image takes Debian's updated trust store and OpenSSL
+  3.0.22, so the eMudhra certificates whose keys could be guessed (October
+  2026) are refused (`tools/tls_trust_check.py` proves it).
+- **Direct downloads behind a browser check:** when a download site's file
+  server answers with Cloudflare's check, the page fetcher (FlareSolverr, if
+  set up) passes it and its pass fetches the file; without one, the row says
+  so and offers Upload a file.
+- **Phones:** a slimmer tab bar, with the continue-reading bar above it as
+  Music's player sits, smaller, and on the web's phones too; on a Home
+  Screen web app the tab bar clears the home indicator; pull to refresh is
+  iOS's own control over black, not a white page. The iPad keeps its sizes.
+- **Panel view:** a spread on a whole-page step fits whole; the whole page is
+  a look at one page, said on the counter; *Scan pages for panels again*
+  asks the vision model again and forgets the comic's readings, not one
+  copy's, and shows the new panels.
+- **Discover's issue drawer** shows the issue's run first, under Pull.
+- Tests: closing the catalog store no longer closes a connection another
+  thread is using (it crashed the test suites about one run in eight; a
+  running server never did it).
 
 - *Panel view asks Claude Haiku 5.5*, with room for a 2,048-token answer:
   on the owner's hand-fixed pages it matched his fixes at least as well as
