@@ -385,6 +385,11 @@ what it keeps on a device is `docs/PRIVACY.md`.
   the Reviewer signed in and read all five episodes. The release script
   `tools/reader_app_release.sh` made the first TestFlight upload on
   2026-10-09.
+- **Submitted to App Review (2026-11-23):** Flipparr View build
+  20261123183446 (from `6541c7a`), with the listing, screenshots and App
+  Privacy answers ("Data Not Collected") in `docs/APP_STORE.md`. The demo
+  server must stay up and unchanged until Apple decides, and again for each
+  later review.
 
 ## Carried-forward findings
 
