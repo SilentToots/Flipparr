@@ -4410,6 +4410,9 @@ class CatalogStore:
         read_here = row["file_id"] is not None and int(row["file_id"]) == int(row["shown_file"])
         return {
             "page": int(row["page"] or 0), "pageCount": int(row["page_count"] or 0),
+            # The panel too: reading_target counts panels read on the first
+            # page as reading (2026-11-23).
+            "panel": int(row["panel"] or 0),
             "finishedAt": row["finished_at"], "updatedAt": row["last_read_at"],
             "issueNumber": row["issue_number"],
             "stale": bool(read_here and row["file_signature"] and row["file_signature"] != row["scanned_signature"]

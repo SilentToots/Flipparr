@@ -3124,6 +3124,20 @@ class FilenameParserTests(unittest.TestCase):
         self.assertEqual(target["fileId"], "3", "the one read most recently")
         self.assertEqual((target["page"], target["pageCount"]), (9, 24))
 
+    def test_panels_read_on_the_first_page_are_reading_and_opening_is_not(self):
+        """Panel view saves its step on page 1: the run said "Begin Issue #1"
+        while Keep Reading had the same comic at 25% (2026-11-23)."""
+        from app import reading_target
+
+        run = [{"id": "1", "issueNumber": "1"}, {"id": "2", "issueNumber": "2"}]
+        into = {"1": {"page": 0, "panel": 1, "pageCount": 4, "updatedAt": "2026-11-23T00:00:00+00:00",
+                      "finishedAt": None}}
+        target = reading_target(run, [], into)
+        self.assertEqual((target["state"], target["fileId"], target["page"]), ("continue", "1", 0))
+        opened = {"1": {"page": 0, "panel": 0, "pageCount": 4, "updatedAt": "2026-11-23T00:00:00+00:00",
+                        "finishedAt": None}}
+        self.assertEqual(reading_target(run, [], opened)["state"], "unstarted", "opened, nothing turned")
+
     def test_a_run_read_to_the_end_offers_it_again_from_its_first_issue(self):
         """The button says "Restart Series", so it restarts the series. Mihon's
         one button jumps to the first *unread* instead, which is why

@@ -15768,11 +15768,14 @@ def reading_target(
             # a page that may not exist. It is not a place, and not evidence
             # that the comic was ever started.
             return None
-        if not record["page"] and not record["finishedAt"]:
+        if not record["page"] and not record.get("panel") and not record["finishedAt"]:
             # Opened, nothing turned. The reader does not write this -- it
             # saves nothing until a page moves -- but a cleared record and an
             # older client both can, and "Continue Series, page 1 of 47" is
-            # not a thing anyone wants to be offered.
+            # not a thing anyone wants to be offered. A panel past the first
+            # is reading, though: panel view saves its step on page 1, and
+            # the run said "Begin Issue #1" while Keep Reading and the
+            # continue bar had the same comic at 25% (2026-11-23).
             return None
         return record
 
