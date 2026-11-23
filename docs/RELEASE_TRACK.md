@@ -364,8 +364,18 @@ what it keeps on a device is `docs/PRIVACY.md`.
   reconnect check, run, arc and collection downloads, and Settings. The
   server side is in production since `b602510` (schema 68).
 - **Evidence still owed:** the iPad checklist in `docs/INSTALL_PROOFS.md`
-  on a TestFlight build; App Review's demo server (a Flipparr with comics
-  whose licences permit it, not the owner's instance). The release script
+  on a TestFlight build (build 20261116005122, of f177b1e, uploaded
+  2026-11-16; the owner reports it looking good, the checklist not yet
+  recorded).
+- **App Review's demo server (2026-11-23):** a separate Flipparr 0.3.0 on
+  the owner's NAS (`flipparr-demo`, its own config, cache and port), meant to
+  be reached as `demo.flipparr.silenttoots.com`. Its library is *Pepper&Carrot*
+  episodes 1-5 by David Revoy (CC BY 4.0), each packed as a CBZ with the
+  author's credit list on an added last page and in ComicInfo.xml, mounted
+  read-only. No download service, catalog key or vision assistant: nothing
+  leaves it, and the author's "AI derivation prohibited" is kept. Sign-in is
+  required; a "Reviewer" reader profile is for App Review, its password kept
+  on the NAS, not in the repository. The release script
   `tools/reader_app_release.sh` made the first TestFlight upload on
   2026-10-09.
 

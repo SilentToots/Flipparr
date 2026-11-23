@@ -58,6 +58,7 @@ The survey that opened Gate 4 found, and the probes on the NAS confirmed:
 | Where | Image under test | Previous image | Held |
 |---|---|---|---|
 | NAS, 2026-10-05 | the Gate 4 build | `flipparr:latest` of 2026-09-07 (schema 28) | 5 of 5 |
+| Senpai, 2026-11-23 | published `ghcr.io/silenttoots/flipparr:0.3.0` (`sha256:9ef544aa…015606`, build f251034, schema 81) | published `0.2.0` (schema 76) | 5 of 5 |
 
 Recorded per run in `install-drill.json` and the containers' logs under
 `--out`.
