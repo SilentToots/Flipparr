@@ -6800,12 +6800,11 @@ def _solver_clearance(url: str) -> dict[str, str]:
 def _open_direct_site_file(link: str):
     """The download's response, through the file server's browser check if it asks.
 
-    GetComics' file server (fs2.comicfiles.ru) began answering ordinary
+    The owner's download site's file server began answering ordinary
     requests with Cloudflare's "Just a moment..." check, even a browser's
-    user agent: Justice League Unlimited #3 was refused 403 on 2026-10-23,
-    and the same refusals on 2026-09-28 and 09-30 were this too. The page
-    fetcher passes the check; its pass, sent back with the request, fetched
-    the 50 MB file (2026-10-23).
+    user agent: a comic was refused 403 on 2026-10-23, and the same refusals
+    on 2026-09-28 and 09-30 were this too. The page fetcher passes the check;
+    its pass, sent back with the request, fetched the 50 MB file (2026-10-23).
     """
     try:
         return _safe_urlopen(urllib.request.Request(link, headers={"User-Agent": f"Flipparr/{APP_VERSION}"}), timeout=120.0)

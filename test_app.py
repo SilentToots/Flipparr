@@ -4206,7 +4206,7 @@ class DirectSiteDownloadTests(unittest.TestCase):
     def _response(body, *, name="Supergirl - Woman of Tomorrow 08 (2022).cbz"):
         response = Mock()
         response.headers = {"Content-Length": str(len(body)), "Content-Disposition": ""}
-        response.geturl.return_value = f"https://fs1.comicfiles.ru/2022.02.16/{urllib.parse.quote(name)}"
+        response.geturl.return_value = f"https://fs1.files.example/2022.02.16/{urllib.parse.quote(name)}"
         chunks = [body, b""]
         response.read.side_effect = lambda *_: chunks.pop(0)
         return contextlib.nullcontext(response)
@@ -4235,7 +4235,7 @@ class DirectSiteDownloadTests(unittest.TestCase):
         headers = email.message.Message()
         if challenge:
             headers["cf-mitigated"] = "challenge"
-        return urllib.error.HTTPError("https://fs2.comicfiles.ru/2025.01.22/JLU%20003.cbr", code, "Forbidden",
+        return urllib.error.HTTPError("https://fs2.files.example/2025.01.22/JLU%20003.cbr", code, "Forbidden",
                                       headers, io.BytesIO(body))
 
     def test_the_file_servers_browser_check_is_passed_with_the_page_fetchers_pass(self):
@@ -4250,7 +4250,7 @@ class DirectSiteDownloadTests(unittest.TestCase):
             return self._response(body, name="Justice League Unlimited 003 (2025).cbr")
 
         solved = {"solution": {"userAgent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/140",
-                               "cookies": [{"name": "cf_clearance", "value": "abc", "domain": ".comicfiles.ru"},
+                               "cookies": [{"name": "cf_clearance", "value": "abc", "domain": ".files.example"},
                                            {"name": "elsewhere", "value": "no", "domain": "other.example"}]}}
         with tempfile.TemporaryDirectory() as folder:
             staging = Path(folder) / "direct_site"
@@ -4261,9 +4261,9 @@ class DirectSiteDownloadTests(unittest.TestCase):
                  patch("app._safe_urlopen", side_effect=urlopen):
                 app._fetch_direct_site_download(5, 11, "https://comics.example/dc/jlu-3/", "Justice League Unlimited #3")
             self.assertEqual(len(list(staging.rglob("*.cbr"))), 1)
-        self.assertEqual(solver.call_args.args[0]["url"], "https://fs2.comicfiles.ru/",
+        self.assertEqual(solver.call_args.args[0]["url"], "https://fs2.files.example/",
                          "the page fetcher visits the server that asked for the check")
-        self.assertEqual(opened[1]["url"], "https://fs2.comicfiles.ru/2025.01.22/JLU%20003.cbr",
+        self.assertEqual(opened[1]["url"], "https://fs2.files.example/2025.01.22/JLU%20003.cbr",
                          "the retry goes to the server that checked, where its cookie is good")
         self.assertEqual(opened[1].get("Cookie"), "cf_clearance=abc")
         self.assertEqual(opened[1].get("User-agent"), "Mozilla/5.0 (X11; Linux x86_64) Chrome/140",
