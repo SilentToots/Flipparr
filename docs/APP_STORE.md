@@ -129,6 +129,19 @@ Suggested captions if overlaid later: "Your library, on every device" /
 
 ## App Privacy ("nutrition label")
 
+**Where:** App Store Connect › the app › **App Privacy** (left sidebar, under
+General). Two things there block "Submit for Review" until done, and only an
+Admin of the developer account can do them:
+
+1. **Privacy Policy URL** -- beside *Privacy Policy*, **Edit**, enter
+   `https://github.com/SilentToots/Flipparr/blob/v0.3.0/docs/PRIVACY.md`,
+   **Save**. (Plain-text copy of the same file, if GitHub's page view is ever
+   a problem: `https://raw.githubusercontent.com/SilentToots/Flipparr/v0.3.0/docs/PRIVACY.md`.)
+2. **Data collection** -- **Get Started** › *Do you or your third-party
+   partners collect data from this app?* › **No, we do not collect data from
+   this app** › **Save**, then **Publish** at the top right. The page then
+   shows "Data Not Collected".
+
 **Recommended answer: Data Not Collected** -- *owner's call*.
 
 Apple counts data as *collected* when it leaves the device in a way that lets
