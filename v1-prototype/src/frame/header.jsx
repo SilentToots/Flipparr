@@ -309,7 +309,14 @@ export function PageHeader({ title, leading, actions, primary, search = "none", 
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => root.style.setProperty("--page-header-height", `${header.offsetHeight}px`));
     });
-    observer.observe(header);
+    // The border box: the height written is offsetHeight, padding and all,
+    // and the top padding is the safe-area inset. Flipparr View's web view
+    // can report that inset a moment after the first layout; the padding
+    // grows by it while the content box stays the same, a content-box
+    // observer never hears of it, and on a phone the page kept the shorter
+    // height -- its first shelf under the tabs, by the inset, on about one
+    // cold launch in three (iPhone 17 Pro Max, 2026-11-23).
+    observer.observe(header, { box: "border-box" });
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
