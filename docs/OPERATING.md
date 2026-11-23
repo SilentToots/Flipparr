@@ -531,6 +531,25 @@ tar -czf flipparr-backup-$(date +%F).tgz -C /path/to config
 docker compose start flipparr
 ```
 
+**Check the backup before you rely on it,** above all before an upgrade. An
+archive of the wrong folder still succeeds: it is a few kilobytes, holds no
+catalog, and you find out only when you need it. Take the folder from the
+running container, not from memory or an old note -- it is wherever
+`CONFIG_PATH` pointed when the container was created, and a folder that has
+moved since leaves the old path standing, empty or stale:
+
+```bash
+docker inspect flipparr --format '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}'
+tar -tzf flipparr-backup-$(date +%F).tgz | grep '/flipparr\.db$'
+ls -lh flipparr-backup-$(date +%F).tgz
+```
+
+The first prints the folder to archive; the second must name the catalog;
+the third should be about the size of the folder without its `downloads/`
+and `logs/` -- tens of megabytes for a library of a few thousand comics, not
+a few kilobytes. (2026-11-23: a backup taken before an upgrade read a config
+path that had since moved, and came out at 4 KB; the size gave it away.)
+
 What is in it, and what you may leave out:
 
 - `flipparr.db` (and `flipparr.db-wal`, `flipparr.db-shm` while running): the
