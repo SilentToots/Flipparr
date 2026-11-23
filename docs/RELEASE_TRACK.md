@@ -368,14 +368,19 @@ what it keeps on a device is `docs/PRIVACY.md`.
   2026-11-16; the owner reports it looking good, the checklist not yet
   recorded).
 - **App Review's demo server (2026-11-23):** a separate Flipparr 0.3.0 on
-  the owner's NAS (`flipparr-demo`, its own config, cache and port), meant to
-  be reached as `demo.flipparr.silenttoots.com`. Its library is *Pepper&Carrot*
+  the owner's NAS (`flipparr-demo`, its own config, cache and port), public
+  at `https://flipparr-demo.silenttoots.com` through a Cloudflare tunnel
+  (`flipparr-demo-tunnel`, cloudflared pinned, reaching only the demo; the
+  demo's port is on loopback, and it trusts the tunnel's forwarded address so
+  each visitor has their own sign-in throttle). Its library is *Pepper&Carrot*
   episodes 1-5 by David Revoy (CC BY 4.0), each packed as a CBZ with the
   author's credit list on an added last page and in ComicInfo.xml, mounted
   read-only. No download service, catalog key or vision assistant: nothing
   leaves it, and the author's "AI derivation prohibited" is kept. Sign-in is
-  required; a "Reviewer" reader profile is for App Review, its password kept
-  on the NAS, not in the repository. The release script
+  required; a "Reviewer" reader profile (`reviewer`) is for App Review, its
+  password kept on the NAS, not in the repository. Proven from outside the
+  network the same day: 0.3.0 and catalog ok, an anonymous request refused,
+  the Reviewer signed in and read all five episodes. The release script
   `tools/reader_app_release.sh` made the first TestFlight upload on
   2026-10-09.
 
