@@ -177,6 +177,11 @@ You lose manual corrections, aliases and request history — not files.
 - **Downloads makes room for a stack's edges.** The two card edges behind a
   run kept twice or more rise 12px above its card, and the grid gave them
   none: they met the "Downloaded" heading and the labels of the row above.
+- **A cover that arrives late is shown.** A cover remembered its failures by
+  their place in the list, so once a run's first cover failed (an upcoming
+  issue before Metron had its image) a cover added later under the same run
+  was skipped until the page was reloaded: the run drawer's header showed it,
+  its cover slot the placeholder. Failures are remembered by address now.
 
 ### 0.3.0 — Manga volumes, searches in plain words, and catalogs that go away
 
