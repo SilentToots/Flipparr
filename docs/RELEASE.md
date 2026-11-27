@@ -168,6 +168,14 @@ You lose manual corrections, aliases and request history — not files.
 - **The reader names the comic** -- "Pepper&Carrot #3 · The Secret
   Ingredients", "Chainsaw Man Vol. 18" -- not its file; a file no issue is
   known for keeps its name.
+- **Flipparr View's bottom frost reaches the screen's edge.** The continue
+  bar kept the website's 4px gap from the bottom (left for Safari's toolbar
+  sampling), so in the app covers scrolling past showed sharp below the
+  frost, under the tab bar. Found on the owner's iPhone in the App Store
+  build; app only.
+- **Downloads makes room for a stack's edges.** The two card edges behind a
+  run kept twice or more rise 12px above its card, and the grid gave them
+  none: they met the "Downloaded" heading and the labels of the row above.
 
 ### 0.3.0 — Manga volumes, searches in plain words, and catalogs that go away
 

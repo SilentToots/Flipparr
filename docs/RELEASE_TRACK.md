@@ -390,6 +390,9 @@ what it keeps on a device is `docs/PRIVACY.md`.
   Privacy answers ("Data Not Collected") in `docs/APP_STORE.md`. The demo
   server must stay up and unchanged until Apple decides, and again for each
   later review.
+- **On the App Store (by 2026-11-27):** Flipparr View 1.0, build
+  20261123183446, approved and released. Fixes found after it go in the next
+  build (`docs/RELEASE.md`, Unreleased).
 
 ## Carried-forward findings
 
