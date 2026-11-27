@@ -1881,17 +1881,22 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    bar, 12px into the home indicator's 34px and never closer than 12px to
    the edge (the owner, 2026-10-17). */
 @media (max-width: 640px) {
-  :root { --tab-bar-bottom: calc(var(--space-8) + env(safe-area-inset-bottom) + var(--home-lift)); }
+  :root { --tab-bar-bottom: calc(var(--space-8) + env(safe-area-inset-bottom) + var(--home-lift)); --continue-bar-edge: var(--space-4); }
+  /* No Safari bar samples Flipparr View's edge, so its continue bar, and
+     the frost it carries, reach the bottom of the screen: 4px short, the
+     covers passing under it showed sharp below the frost (the owner's
+     iPhone, 2026-11-27). */
   .reader-app {
     --app-bar-bottom: max(var(--space-12), calc(env(safe-area-inset-bottom) - var(--space-12)));
     --tab-bar-bottom: var(--app-bar-bottom);
+    --continue-bar-edge: 0px;
   }
   .reader-app .sidebar { padding-bottom: calc(var(--app-bar-bottom) - var(--space-4)); }
   .reader-app .toast { bottom: calc(var(--mobile-nav-height) + var(--app-bar-bottom)); }
   .reader-app .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + var(--app-bar-bottom)); }
   .continue-bar {
-    left: 0; bottom: var(--space-4);
-    padding-bottom: calc(var(--tab-bar-bottom) - var(--space-4) + var(--tab-bar-height) + var(--space-12));
+    left: 0; bottom: var(--continue-bar-edge);
+    padding-bottom: calc(var(--tab-bar-bottom) - var(--continue-bar-edge) + var(--tab-bar-height) + var(--space-12));
     transition: padding-left var(--motion-duration-morph) var(--motion-ease-morph), padding-bottom var(--motion-duration-morph) var(--motion-ease-morph);
   }
   /* Slimmer than the iPad's 64px bar, which keeps its size (the owner,
@@ -1915,7 +1920,7 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
      moves on the tab bar's own curve, so the two move as one; reduced
      motion makes both instant. */
   body:has(.sidebar.tab-bar-collapsed) .continue-bar {
-    padding-bottom: calc(var(--tab-bar-bottom) - var(--space-4));
+    padding-bottom: calc(var(--tab-bar-bottom) - var(--continue-bar-edge));
     padding-left: calc(var(--page-inset) + var(--bottom-bar-height) + var(--space-8));
   }
 }
@@ -1953,6 +1958,10 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
    above for the edges its scrolling would otherwise clip. */
 .shelf-row > .download-stack { flex: none; }
 .shelf-row:has(.download-stack) { margin-top: calc(var(--space-12) * -1); padding-top: var(--space-12); }
+/* In Downloads' grid the edges rise 12px above the card: the grid makes that
+   room above its first row and between rows, or the edges met the card's
+   heading and the labels of the row above (the owner's iPhone, 2026-11-27). */
+.download-grid:has(.download-stack) { padding-top: var(--space-12); row-gap: calc(var(--space-16) + var(--space-12)); }
 .shelf-row .download-stack-layer { border-radius: var(--radius-4); }
 .download-stack-layer { position: absolute; top: 0; z-index: 0; aspect-ratio: var(--cover-ratio); border-radius: var(--radius-8); background: var(--stack-edge); pointer-events: none; }
 .download-stack-layer.depth-1 { left: var(--space-6); right: var(--space-6); translate: 0 calc(var(--space-6) * -1); }
