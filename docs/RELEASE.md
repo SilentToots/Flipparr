@@ -172,7 +172,8 @@ You lose manual corrections, aliases and request history — not files.
   bar kept the website's 4px gap from the bottom (left for Safari's toolbar
   sampling), so in the app covers scrolling past showed sharp below the
   frost, under the tab bar. Found on the owner's iPhone in the App Store
-  build; app only.
+  build. The web added to a Home Screen had the same strip (no Safari bar
+  there either) and reaches the edge too; a Safari tab keeps the 4px.
 - **Downloads makes room for a stack's edges.** The two card edges behind a
   run kept twice or more rise 12px above its card, and the grid gave them
   none: they met the "Downloaded" heading and the labels of the row above.

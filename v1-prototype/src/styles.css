@@ -1891,6 +1891,11 @@ input[type="checkbox"]:not([role="switch"]) { width: var(--space-20); height: va
     --tab-bar-bottom: var(--app-bar-bottom);
     --continue-bar-edge: 0px;
   }
+  /* Nor the web added to a Home Screen, which has no Safari bar either: the
+     4px is for Safari's tab only (the owner's iPhone, 2026-11-27). */
+  @media (display-mode: standalone), (display-mode: fullscreen) {
+    :root { --continue-bar-edge: 0px; }
+  }
   .reader-app .sidebar { padding-bottom: calc(var(--app-bar-bottom) - var(--space-4)); }
   .reader-app .toast { bottom: calc(var(--mobile-nav-height) + var(--app-bar-bottom)); }
   .reader-app .main-content { padding-bottom: calc(var(--space-20) + var(--mobile-nav-height) + var(--app-bar-bottom)); }
